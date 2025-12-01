@@ -12,25 +12,32 @@ export default function Participant() {
 
     useEffect(() => {
         socket.on('state:update', (state) => {
+            console.log('[Participant] State update received:', state.status, 'Timer:', state.timer, 'Participants:', Object.keys(state.participants || {}).length);
             setGameState(state);
             // If the server has a prompt for us (e.g. reconnect), update it
             // Be careful not to overwrite local changes if typing fast, 
             // but for simplicity/safety on reconnect, we sync.
-            if (state.participants[socket.id]) {
+            if (state.participants && state.participants[socket.id]) {
                 // Only update if significantly different or empty to avoid cursor jumps?
                 // For now, let's rely on local state for typing and only sync on initial load/reconnect
             }
         });
 
         socket.on('timer:update', (data) => {
-            setGameState(prev => prev ? ({ ...prev, ...data }) : null);
+            console.log('[Participant] Timer update:', data);
+            setGameState(prev => {
+                if (!prev) return null;
+                const updated = { ...prev, ...data };
+                // Assicurati che lo stato sia aggiornato correttamente
+                return updated;
+            });
         });
 
         return () => {
             socket.off('state:update');
             socket.off('timer:update');
         };
-    }, []);
+    }, [socket]);
 
     const [token, setToken] = useState('');
     const [error, setError] = useState('');
@@ -102,10 +109,19 @@ export default function Participant() {
 
     if (!gameState) return <div className={styles.container}>Loading System...</div>;
 
-    const isWriting = gameState.status === 'WRITING';
-    // const isWriting = true; // Debug
-
-    const myColor = gameState.participants[socket.id]?.color || '#B6FF6C';
+    // Verifica che il partecipante sia registrato nello stato
+    const myParticipant = gameState.participants?.[socket.id];
+    const isWriting = gameState.status === 'WRITING' && myParticipant;
+    const myColor = myParticipant?.color || '#B6FF6C';
+    
+    // Debug log
+    console.log('[Participant] Render:', {
+        status: gameState.status,
+        isWriting,
+        hasParticipant: !!myParticipant,
+        timer: gameState.timer,
+        participantsCount: Object.keys(gameState.participants || {}).length
+    });
 
     return (
         <div className={styles.container} style={{ backgroundColor: myColor, color: 'black' }}>

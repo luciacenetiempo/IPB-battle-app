@@ -96,11 +96,15 @@ export default async function handler(req, res) {
                 });
                 // Check if all expected participants joined
                 if (Object.keys(newState.participants).length === newState.expectedParticipantCount && newState.status === 'WAITING_FOR_PLAYERS') {
+                    // Aggiorna lo stato a WRITING con timer
+                    const timerStartTime = Date.now();
                     newState = updateGameState({ 
                         status: 'WRITING', 
                         isTimerRunning: true,
-                        timerStartTime: Date.now()
+                        timerStartTime: timerStartTime
                     });
+                    // Forza broadcast immediato dello stato aggiornato
+                    broadcastEvent('state:update', newState);
                 }
                 // Emit both events
                 broadcastEvent('participant:joined', { id: socketId, name: newState.participants[socketId].name, color: assignedColor });
