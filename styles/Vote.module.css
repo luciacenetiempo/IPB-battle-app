@@ -1,0 +1,78 @@
+.container {
+    padding: 1rem;
+    background: #000;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    width: 100%;
+    margin: 2rem 0;
+}
+
+.card {
+    background: #111;
+    border: 2px solid #333;
+    padding: 0.5rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.card.selected {
+    border-color: var(--accent-color);
+    background: #220022;
+}
+
+.imagePlaceholder {
+    aspect-ratio: 1;
+    background: #222;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-bottom: 0.5rem;
+    color: #666;
+}
+
+.name {
+    font-weight: bold;
+    font-size: 0.9rem;
+}
+
+.voteButton {
+    background: var(--color-cyan);
+    color: #000;
+    border: none;
+    padding: 1.5rem 2rem;
+    font-size: 1.2rem;
+    font-weight: bold;
+    width: 100%;
+    max-width: 300px;
+    margin-top: auto;
+    margin-bottom: 2rem;
+    border-radius: 9999px;
+    /* Pill */
+    box-shadow: 0 0 20px rgba(77, 235, 255, 0.4);
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    font-family: inherit;
+    transition: all 0.2s;
+}
+
+.voteButton:hover:not(:disabled) {
+    transform: scale(1.05);
+    box-shadow: 0 0 40px rgba(77, 235, 255, 0.6);
+}
+
+.voteButton:disabled {
+    background: #333;
+    color: #555;
+    cursor: not-allowed;
+    box-shadow: none;
+}
