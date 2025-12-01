@@ -46,6 +46,39 @@ app.prepare().then(() => {
         console.log(`[${type.toUpperCase()}] ${msg}`);
     };
 
+    // Helper function per normalizzare il prompt a stringa
+    const normalizePrompt = (prompt) => {
+        if (prompt === undefined || prompt === null) {
+            return '';
+        }
+        
+        // Se è già una stringa, ritorna trimmed
+        if (typeof prompt === 'string') {
+            return prompt.trim();
+        }
+        
+        // Se è un oggetto, prova a estrarre la stringa
+        if (typeof prompt === 'object') {
+            // Prova {prompt: "..."}
+            if (prompt.prompt && typeof prompt.prompt === 'string') {
+                return prompt.prompt.trim();
+            }
+            // Prova {prompt: {prompt: "..."}}
+            if (prompt.prompt && typeof prompt.prompt === 'object' && prompt.prompt.prompt && typeof prompt.prompt.prompt === 'string') {
+                return prompt.prompt.prompt.trim();
+            }
+            // Se non riesce, converte l'oggetto in stringa JSON
+            try {
+                return JSON.stringify(prompt).trim();
+            } catch (e) {
+                return String(prompt).trim();
+            }
+        }
+        
+        // Per qualsiasi altro tipo, converti in stringa
+        return String(prompt || '').trim();
+    };
+
     // Async function to trigger generation
     const triggerGeneration = async () => {
         console.log('[Server] triggerGeneration() called');
@@ -70,47 +103,143 @@ app.prepare().then(() => {
         logToAdmin('✓ Replicate API token found', 'success');
 
         const generationPromises = participants.map(async (p) => {
-            if (p.prompt && p.prompt.trim() !== '') {
+            // Normalizza il prompt PRIMA di qualsiasi operazione
+            console.log(`[Server] Processing participant ${p.name} (${p.id})`);
+            console.log(`[Server] Raw prompt type:`, typeof p.prompt, 'value:', p.prompt);
+            
+            const promptText = normalizePrompt(p.prompt);
+            console.log(`[Server] Normalized prompt for ${p.name}: "${promptText.substring(0, 50)}${promptText.length > 50 ? '...' : ''}" (length: ${promptText.length})`);
+            
+            if (promptText !== '') {
                 try {
-                    logToAdmin(`Creating prediction for ${p.name} (${p.id})`, 'info');
-                    console.log(`[Server] Creating prediction for ${p.name} with prompt: "${p.prompt}"`);
+                    const startTime = Date.now();
+                    logToAdmin(`📝 Inizio generazione per ${p.name}: "${promptText.substring(0, 50)}${promptText.length > 50 ? '...' : ''}"`, 'info');
+                    console.log(`[Server] ====== STARTING GENERATION FOR ${p.name} ======`);
+                    console.log(`[Server] Original prompt type:`, typeof p.prompt, 'value:', p.prompt);
+                    console.log(`[Server] Processed prompt: "${promptText}"`);
+                    
+                    // Preparazione input
+                    const inputData = {
+                        prompt: promptText,
+                        aspect_ratio: '1:1',
+                        output_format: 'webp',
+                        output_quality: 90
+                    };
+                    console.log(`[Server] Input data:`, JSON.stringify(inputData, null, 2));
+                    logToAdmin(`🔧 Chiamando Replicate API per ${p.name}...`, 'info');
+                    console.log(`[Server] Calling: replicate.predictions.create()`);
+                    console.log(`[Server] Model: black-forest-labs/flux-2-dev`);
+                    console.log(`[Server] Input:`, inputData);
 
-                    // 1. Create prediction
-                    let prediction = await replicate.predictions.create({
-                        model: "google/nano-banana-pro",
-                        input: {
-                            prompt: p.prompt,
-                            num_inference_steps: 25,
-                            guidance_scale: 7.5
-                        }
-                    });
-                    logToAdmin(`Prediction created for ${p.name}: ${prediction.id}`, 'info');
-                    console.log(`[Server] Prediction ID: ${prediction.id}, Status: ${prediction.status}`);
+                    // 1. Create prediction con Flux 2
+                    let prediction;
+                    try {
+                        console.log(`[Server] [${p.name}] Making API call to Replicate...`);
+                        prediction = await replicate.predictions.create({
+                            model: "black-forest-labs/flux-2-dev",
+                            input: inputData
+                        });
+                        console.log(`[Server] [${p.name}] ✅ API call successful!`);
+                        console.log(`[Server] [${p.name}] Response received:`, JSON.stringify({
+                            id: prediction.id,
+                            status: prediction.status,
+                            created_at: prediction.created_at,
+                            urls: prediction.urls
+                        }, null, 2));
+                        logToAdmin(`⏳ Predizione creata per ${p.name} (ID: ${prediction.id.substring(0, 8)}...)`, 'info');
+                        console.log(`[Server] [${p.name}] Full prediction object:`, prediction);
+                    } catch (createError) {
+                        console.error(`[Server] [${p.name}] ❌ ERROR during API call:`, createError);
+                        console.error(`[Server] [${p.name}] Error message:`, createError.message);
+                        console.error(`[Server] [${p.name}] Error stack:`, createError.stack);
+                        logToAdmin(`❌ Errore nella chiamata API per ${p.name}: ${createError.message}`, 'error');
+                        throw createError;
+                    }
 
                     // 2. Poll for result
                     let pollCount = 0;
+                    console.log(`[Server] [${p.name}] Starting polling loop...`);
+                    logToAdmin(`🔄 Inizio polling per ${p.name}...`, 'info');
+                    
                     while (prediction.status !== 'succeeded' && prediction.status !== 'failed' && prediction.status !== 'canceled') {
                         await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2s
-                        prediction = await replicate.predictions.get(prediction.id);
                         pollCount++;
-                        logToAdmin(`Polling ${p.name} (${pollCount}): ${prediction.status}`, 'debug');
-                        console.log(`[Server] Poll ${pollCount} for ${p.name}: ${prediction.status}`);
+                        
+                        try {
+                            console.log(`[Server] [${p.name}] Poll #${pollCount}: Fetching prediction status...`);
+                            console.log(`[Server] [${p.name}] Calling: replicate.predictions.get("${prediction.id}")`);
+                            
+                            const previousStatus = prediction.status;
+                            prediction = await replicate.predictions.get(prediction.id);
+                            
+                            console.log(`[Server] [${p.name}] Poll #${pollCount} response received:`);
+                            console.log(`[Server] [${p.name}]   - Previous status: ${previousStatus}`);
+                            console.log(`[Server] [${p.name}]   - Current status: ${prediction.status}`);
+                            console.log(`[Server] [${p.name}]   - Full response:`, JSON.stringify({
+                                id: prediction.id,
+                                status: prediction.status,
+                                output: prediction.output,
+                                error: prediction.error,
+                                logs: prediction.logs
+                            }, null, 2));
+                            
+                            // Log ogni poll
+                            logToAdmin(`🔄 ${p.name}: Poll #${pollCount} - Status: ${prediction.status}`, 'info');
+                            
+                            // Se c'è un errore nella risposta
+                            if (prediction.error) {
+                                console.error(`[Server] [${p.name}] ⚠️ Error in prediction:`, prediction.error);
+                                logToAdmin(`⚠️ ${p.name}: Errore nella predizione - ${prediction.error}`, 'error');
+                            }
+                            
+                            // Se ci sono log, mostrali
+                            if (prediction.logs) {
+                                console.log(`[Server] [${p.name}] Logs:`, prediction.logs);
+                            }
+                        } catch (pollError) {
+                            console.error(`[Server] [${p.name}] ❌ ERROR during poll #${pollCount}:`, pollError);
+                            console.error(`[Server] [${p.name}] Error message:`, pollError.message);
+                            console.error(`[Server] [${p.name}] Error stack:`, pollError.stack);
+                            logToAdmin(`❌ Errore durante il polling #${pollCount} per ${p.name}: ${pollError.message}`, 'error');
+                            throw pollError;
+                        }
                     }
 
+                    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+                    console.log(`[Server] [${p.name}] ====== POLLING COMPLETED ======`);
+                    console.log(`[Server] [${p.name}] Final status: ${prediction.status}`);
+                    console.log(`[Server] [${p.name}] Total polls: ${pollCount}`);
+                    console.log(`[Server] [${p.name}] Duration: ${duration}s`);
+
                     if (prediction.status === 'succeeded') {
-                        logToAdmin(`✓ Success for ${p.name}`, 'success');
-                        console.log(`[Server] Success for ${p.name}:`, prediction.output);
-                        gameState.participants[p.id].image = prediction.output;
+                        const imageUrl = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output;
+                        console.log(`[Server] [${p.name}] ✅ SUCCESS!`);
+                        console.log(`[Server] [${p.name}] Image URL:`, imageUrl);
+                        console.log(`[Server] [${p.name}] Output type:`, Array.isArray(prediction.output) ? 'array' : typeof prediction.output);
+                        console.log(`[Server] [${p.name}] Full output:`, prediction.output);
+                        
+                        gameState.participants[p.id].image = imageUrl;
+                        logToAdmin(`✅ Immagine generata con successo per ${p.name} (${duration}s)`, 'success');
+                        console.log(`[Server] [${p.name}] Image saved to gameState`);
                     } else {
-                        logToAdmin(`❌ Failed/Canceled for ${p.name}: ${prediction.status}`, 'error');
-                        console.error(`[Server] Failed for ${p.name}:`, prediction.status);
+                        console.error(`[Server] [${p.name}] ❌ FAILED/CANCELED`);
+                        console.error(`[Server] [${p.name}] Status: ${prediction.status}`);
+                        console.error(`[Server] [${p.name}] Error:`, prediction.error);
+                        logToAdmin(`❌ Generazione fallita per ${p.name}: ${prediction.status}`, 'error');
                     }
                 } catch (error) {
-                    logToAdmin(`❌ Error for ${p.name}: ${error.message}`, 'error');
-                    console.error(`[Server] Error for ${p.name}:`, error);
+                    console.error(`[Server] [${p.name}] ====== FATAL ERROR ======`);
+                    console.error(`[Server] [${p.name}] Error type:`, error.constructor.name);
+                    console.error(`[Server] [${p.name}] Error message:`, error.message);
+                    console.error(`[Server] [${p.name}] Error stack:`, error.stack);
+                    if (error.response) {
+                        console.error(`[Server] [${p.name}] Error response status:`, error.response.status);
+                        console.error(`[Server] [${p.name}] Error response data:`, error.response.data);
+                    }
+                    logToAdmin(`❌ Errore durante la generazione per ${p.name}: ${error.message}`, 'error');
                 }
             } else {
-                logToAdmin(`⚠ Skipping ${p.name} (no prompt)`, 'warning');
+                logToAdmin(`⚠️ Skipping ${p.name} (no prompt)`, 'warning');
                 console.log(`[Server] Skipping ${p.name} - no prompt`);
             }
         });
@@ -207,11 +336,12 @@ app.prepare().then(() => {
                 id: socket.id,
                 token: token,
                 name: data.name || `Player ${participantIndex + 1}`,
-                prompt: '',
+                prompt: '', // Sempre una stringa vuota all'inizio
                 image: null,
                 votes: 0,
                 color: assignedColor
             };
+            console.log(`[Server] Created participant ${socket.id} with prompt type:`, typeof gameState.participants[socket.id].prompt);
 
             socket.emit('participant:joined', { id: socket.id, name: gameState.participants[socket.id].name, color: assignedColor });
 
@@ -226,15 +356,42 @@ app.prepare().then(() => {
             io.emit('state:update', gameState);
         });
 
-        socket.on('participant:update_prompt', (prompt) => {
+        socket.on('participant:update_prompt', (data) => {
             if (gameState.participants[socket.id] && gameState.status === 'WRITING') {
-                gameState.participants[socket.id].prompt = prompt;
+                // Gestisce sia stringa che oggetto {prompt: "..."}
+                let promptValue = '';
+                if (typeof data === 'string') {
+                    promptValue = data;
+                } else if (data && typeof data === 'object') {
+                    if (typeof data.prompt === 'string') {
+                        promptValue = data.prompt;
+                    } else if (data.prompt && typeof data.prompt === 'object' && typeof data.prompt.prompt === 'string') {
+                        promptValue = data.prompt.prompt;
+                    } else {
+                        promptValue = '';
+                    }
+                }
+                
+                // Assicurati che sia sempre una stringa
+                promptValue = String(promptValue || '').trim();
+                
+                gameState.participants[socket.id].prompt = promptValue;
+                console.log(`[Server] Updated prompt for ${socket.id}:`, promptValue.substring(0, 50));
+                console.log(`[Server] Prompt type after update:`, typeof gameState.participants[socket.id].prompt);
+                
+                // Verifica che il prompt sia effettivamente una stringa nello stato
+                if (typeof gameState.participants[socket.id].prompt !== 'string') {
+                    console.error(`[Server] ⚠️ WARNING: Prompt is not a string! Type:`, typeof gameState.participants[socket.id].prompt, 'Value:', gameState.participants[socket.id].prompt);
+                    // Forza conversione
+                    gameState.participants[socket.id].prompt = String(gameState.participants[socket.id].prompt || '');
+                }
+                
                 // Broadcast to screen (and admin) but maybe not other participants if we want secrecy?
                 // Requirement: "nessun modo per vedere testo degli altri prima del tempo" -> 
                 // Screen needs it, Admin needs it. Other participants should NOT receive it.
                 // So we might need targeted emits or just trust the client UI to not show it.
                 // Safer: emit 'screen:update_prompt' to specific room 'screen'
-                io.to('screen').to('admin').emit('prompt:update', { id: socket.id, prompt });
+                io.to('screen').to('admin').emit('prompt:update', { id: socket.id, prompt: promptValue });
             }
         });
 

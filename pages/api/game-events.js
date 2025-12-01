@@ -250,14 +250,33 @@ export default async function handler(req, res) {
             case 'participant:update_prompt':
                 if (state.participants[socketId] && state.status === 'WRITING') {
                     // Il data potrebbe essere direttamente il prompt (stringa) o un oggetto con {prompt: ...}
-                    const promptValue = typeof data === 'string' ? data : (data.prompt || '');
+                    let promptValue;
+                    if (typeof data === 'string') {
+                        promptValue = data;
+                    } else if (data && typeof data === 'object') {
+                        // Se data è un oggetto, estrai la stringa
+                        if (typeof data.prompt === 'string') {
+                            promptValue = data.prompt;
+                        } else if (data.prompt && typeof data.prompt === 'object' && typeof data.prompt.prompt === 'string') {
+                            // Gestisce doppio annidamento
+                            promptValue = data.prompt.prompt;
+                        } else {
+                            promptValue = '';
+                        }
+                    } else {
+                        promptValue = '';
+                    }
+                    
+                    // Assicurati che promptValue sia sempre una stringa
+                    promptValue = String(promptValue || '');
+                    
                     console.log('[GameEvents] participant:update_prompt received:', { socketId, promptType: typeof data, promptLength: promptValue.length, promptPreview: promptValue.substring(0, 50) });
                     
                     newState = updateParticipant(socketId, { prompt: promptValue });
-                    // Emit prompt update to screen room - assicurati che il prompt sia sempre incluso
+                    // Emit prompt update to screen room - assicurati che il prompt sia sempre incluso come stringa
                     const promptUpdateData = {
                         id: socketId,
-                        prompt: promptValue
+                        prompt: promptValue  // Sempre una stringa
                     };
                     console.log('[GameEvents] Broadcasting prompt:update:', promptUpdateData);
                     broadcastEvent('prompt:update', promptUpdateData);

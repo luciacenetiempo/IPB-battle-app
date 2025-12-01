@@ -19,9 +19,24 @@ export default function Screen() {
             Object.values(state.participants || {}).forEach(p => {
                 // Includi anche prompt vuoti per mantenere la sincronizzazione
                 if (p.prompt !== undefined && p.prompt !== null) {
-                    prompts[p.id] = p.prompt;
-                    if (p.prompt && p.prompt.length > 0) {
-                        console.log('[Screen] Found prompt for', p.id, 'length:', p.prompt.length, 'preview:', p.prompt.substring(0, 30));
+                    // Gestisce stringhe, oggetti annidati, ecc.
+                    let promptValue = p.prompt;
+                    if (typeof promptValue === 'object') {
+                        if (typeof promptValue.prompt === 'string') {
+                            promptValue = promptValue.prompt;
+                        } else if (promptValue.prompt && typeof promptValue.prompt === 'object' && typeof promptValue.prompt.prompt === 'string') {
+                            promptValue = promptValue.prompt.prompt;
+                        } else {
+                            promptValue = '';
+                        }
+                    }
+                    // Assicurati che il prompt sia sempre una stringa
+                    const promptStr = String(promptValue || '');
+                    prompts[p.id] = promptStr;
+                    if (promptStr && promptStr.length > 0) {
+                        console.log('[Screen] Found prompt for', p.id, 'length:', promptStr.length, 'preview:', promptStr.substring(0, 30));
+                    } else {
+                        console.log('[Screen] Prompt for', p.id, 'is empty or invalid, type:', typeof p.prompt, 'value:', p.prompt);
                     }
                 }
             });
@@ -29,7 +44,7 @@ export default function Screen() {
                 // Merge con i prompt esistenti per non perdere aggiornamenti
                 // Usa sempre i prompt dallo stato se disponibili
                 const merged = { ...prev, ...prompts };
-                console.log('[Screen] Updated prompts:', Object.keys(merged), 'prompts:', Object.keys(merged).map(id => ({ id, length: merged[id]?.length || 0 })));
+                console.log('[Screen] Updated prompts:', Object.keys(merged), 'prompts:', Object.keys(merged).map(id => ({ id, length: typeof merged[id] === 'string' ? merged[id].length : 0, type: typeof merged[id] })));
                 return merged;
             });
         });
@@ -41,17 +56,24 @@ export default function Screen() {
         socket.on('prompt:update', (data) => {
             console.log('[Screen] Prompt update received:', data, 'Full data:', JSON.stringify(data), 'has prompt:', 'prompt' in data, 'prompt value:', data?.prompt);
             if (data && data.id !== undefined) {
-                // Prendi il prompt dall'evento - potrebbe essere una stringa vuota, ma deve essere presente
-                const prompt = data.prompt;
+                // Prendi il prompt dall'evento - potrebbe essere una stringa o un oggetto con {prompt: "..."}
+                let prompt = data.prompt;
+                
+                // Se il prompt è un oggetto, estrai la stringa
+                if (prompt && typeof prompt === 'object' && prompt.prompt !== undefined) {
+                    prompt = prompt.prompt;
+                }
                 
                 // Aggiorna sempre, anche se il prompt è una stringa vuota
                 if (prompt !== undefined) {
+                    // Assicurati che il prompt sia sempre una stringa
+                    const promptStr = String(prompt || '');
                     setLocalPrompts(prev => {
                         const updated = {
                             ...prev,
-                            [data.id]: prompt || ''
+                            [data.id]: promptStr
                         };
-                        console.log('[Screen] Updated localPrompts for', data.id, 'prompt length:', prompt?.length || 0, 'preview:', (prompt || '').substring(0, 50));
+                        console.log('[Screen] Updated localPrompts for', data.id, 'prompt length:', promptStr.length, 'preview:', promptStr.substring(0, 50));
                         return updated;
                     });
                 } else {
@@ -59,9 +81,11 @@ export default function Screen() {
                     setGameState(currentState => {
                         if (currentState?.participants?.[data.id]?.prompt !== undefined) {
                             const prompt = currentState.participants[data.id].prompt;
+                            // Assicurati che il prompt sia sempre una stringa
+                            const promptStr = String(prompt || '');
                             setLocalPrompts(prev => {
-                                const updated = { ...prev, [data.id]: prompt || '' };
-                                console.log('[Screen] Updated localPrompts from state for', data.id, 'prompt length:', prompt?.length || 0);
+                                const updated = { ...prev, [data.id]: promptStr };
+                                console.log('[Screen] Updated localPrompts from state for', data.id, 'prompt length:', promptStr.length);
                                 return updated;
                             });
                         } else {
@@ -111,7 +135,21 @@ export default function Screen() {
                             {!isVoting && (
                                 <div className={styles.promptDisplay}>
                                     {/* Mostra sempre il prompt più aggiornato da localPrompts o dallo stato */}
-                                    {(localPrompts[p.id] !== undefined ? localPrompts[p.id] : (p.prompt || ''))}<span className={styles.cursor}></span>
+                                    {(() => {
+                                        let displayPrompt = '';
+                                        if (localPrompts[p.id] !== undefined) {
+                                            displayPrompt = typeof localPrompts[p.id] === 'string' ? localPrompts[p.id] : String(localPrompts[p.id] || '');
+                                        } else if (p.prompt) {
+                                            if (typeof p.prompt === 'string') {
+                                                displayPrompt = p.prompt;
+                                            } else if (typeof p.prompt === 'object' && p.prompt.prompt) {
+                                                displayPrompt = String(p.prompt.prompt || '');
+                                            } else {
+                                                displayPrompt = String(p.prompt || '');
+                                            }
+                                        }
+                                        return displayPrompt;
+                                    })()}<span className={styles.cursor}></span>
                                 </div>
                             )}
 
