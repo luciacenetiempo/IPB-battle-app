@@ -78,25 +78,30 @@ async function triggerGeneration(state) {
 }
 
 export default async function handler(req, res) {
+    console.log('[CheckTimer] ====== ENDPOINT CALLED ======');
+    
     if (req.method !== 'GET') {
+        console.log('[CheckTimer] Method not allowed:', req.method);
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
     const state = getGameState();
     
     // Log per debugging
-    console.log('[CheckTimer] Called - status:', state.status, 'isTimerRunning:', state.isTimerRunning, 'timer:', state.timer, 'generationTriggered:', state.generationTriggered);
+    console.log('[CheckTimer] Called - status:', state.status, 'isTimerRunning:', state.isTimerRunning, 'timer:', state.timer, 'generationTriggered:', state.generationTriggered, 'timerStartTime:', state.timerStartTime);
+    sendAdminLog(`🔍 CheckTimer chiamato - Status: ${state.status}, Timer: ${state.timer}, Running: ${state.isTimerRunning}`, 'info');
     
     // Controlla se il timer è arrivato a 0 e lo status è ancora WRITING
     if (state.isTimerRunning && state.timerStartTime && state.status === 'WRITING') {
         const elapsed = Math.floor((Date.now() - state.timerStartTime) / 1000);
         const remaining = Math.max(0, state.timer - elapsed);
         
-        console.log('[CheckTimer] Timer check - elapsed:', elapsed, 'remaining:', remaining, 'generationTriggered:', state.generationTriggered);
+        console.log('[CheckTimer] Timer check - elapsed:', elapsed, 'original timer:', state.timer, 'remaining:', remaining, 'generationTriggered:', state.generationTriggered);
+        sendAdminLog(`⏱️ Timer check - Elapsed: ${elapsed}s, Remaining: ${remaining}s`, 'info');
         
         // Controlla anche se remaining è <= 0 (per gestire casi di arrotondamento)
         if (remaining <= 0 && !state.generationTriggered) {
-            console.log('[CheckTimer] Timer reached zero, triggering generation');
+            console.log('[CheckTimer] ✅ Timer reached zero, triggering generation');
             sendAdminLog('⏰ Timer scaduto! Avvio generazione automatica...', 'info');
             
             // Aggiorna lo stato a GENERATING
@@ -106,10 +111,13 @@ export default async function handler(req, res) {
                 generationTriggered: true
             });
             
+            console.log('[CheckTimer] State updated to GENERATING');
+            
             // Broadcast lo stato aggiornato
             broadcastEvent('state:update', newState);
             
             // Triggera la generazione in background (non bloccante)
+            console.log('[CheckTimer] Starting triggerGeneration...');
             triggerGeneration(newState).catch(err => {
                 console.error('[CheckTimer] Generation error:', err);
                 sendAdminLog(`❌ Errore critico durante la generazione: ${err.message}`, 'error');
@@ -120,21 +128,35 @@ export default async function handler(req, res) {
                 message: 'Generation triggered',
                 state: newState 
             });
+        } else {
+            if (remaining > 0) {
+                console.log('[CheckTimer] ⏳ Timer not yet zero, remaining:', remaining);
+            }
+            if (state.generationTriggered) {
+                console.log('[CheckTimer] ⚠️ Generation already triggered');
+                sendAdminLog('⚠️ Generazione già in corso', 'warning');
+            }
         }
     } else {
         // Log quando le condizioni non sono soddisfatte
+        const reasons = [];
         if (!state.isTimerRunning) {
-            console.log('[CheckTimer] Timer not running');
+            reasons.push('timer not running');
+            console.log('[CheckTimer] ❌ Timer not running');
         }
         if (!state.timerStartTime) {
-            console.log('[CheckTimer] No timerStartTime');
+            reasons.push('no timerStartTime');
+            console.log('[CheckTimer] ❌ No timerStartTime');
         }
         if (state.status !== 'WRITING') {
-            console.log('[CheckTimer] Status is not WRITING:', state.status);
+            reasons.push(`status is ${state.status}`);
+            console.log('[CheckTimer] ❌ Status is not WRITING:', state.status);
         }
         if (state.generationTriggered) {
-            console.log('[CheckTimer] Generation already triggered');
+            reasons.push('generation already triggered');
+            console.log('[CheckTimer] ❌ Generation already triggered');
         }
+        sendAdminLog(`⚠️ Condizioni non soddisfatte: ${reasons.join(', ')}`, 'warning');
     }
     
     return res.status(200).json({ 
@@ -142,7 +164,8 @@ export default async function handler(req, res) {
         timer: state.timer,
         status: state.status,
         isTimerRunning: state.isTimerRunning,
-        generationTriggered: state.generationTriggered
+        generationTriggered: state.generationTriggered,
+        timerStartTime: state.timerStartTime
     });
 }
 
