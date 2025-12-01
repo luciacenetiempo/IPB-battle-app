@@ -18,7 +18,7 @@ export default async function handler(req, res) {
 
         const state = getGameState();
         let newState = state;
-        let broadcastEvent = null;
+        let shouldBroadcastState = false;
 
         switch (action) {
             case 'admin:start_round':
@@ -34,7 +34,7 @@ export default async function handler(req, res) {
                     timerStartTime: null,
                     votingTimerStartTime: null,
                 });
-                broadcastEvent = { type: 'state:update', data: newState };
+                shouldBroadcastState = true;
                 break;
 
             case 'admin:stop_timer':
@@ -42,7 +42,7 @@ export default async function handler(req, res) {
                     isTimerRunning: false,
                     timerStartTime: null
                 });
-                broadcastEvent = { type: 'state:update', data: newState };
+                shouldBroadcastState = true;
                 break;
 
             case 'admin:trigger_generation':
@@ -53,7 +53,7 @@ export default async function handler(req, res) {
                     isTimerRunning: false,
                     timerStartTime: null
                 });
-                broadcastEvent = { type: 'state:update', data: newState };
+                shouldBroadcastState = true;
                 // Trigger generazione in background (non bloccante)
                 triggerGeneration(newState).catch(err => {
                     console.error('[GameEvents] Generation error:', err);
@@ -71,7 +71,7 @@ export default async function handler(req, res) {
                     votingTimer: 120,
                     votingTimerStartTime: Date.now()
                 });
-                broadcastEvent = { type: 'state:update', data: newState };
+                shouldBroadcastState = true;
                 break;
 
             case 'participant:join':
@@ -104,7 +104,7 @@ export default async function handler(req, res) {
                 }
                 // Emit both events
                 broadcastEvent('participant:joined', { id: socketId, name: newState.participants[socketId].name, color: assignedColor });
-                broadcastEvent = { type: 'state:update', data: newState };
+                shouldBroadcastState = true;
                 break;
 
             case 'participant:update_prompt':
@@ -112,7 +112,7 @@ export default async function handler(req, res) {
                     newState = updateParticipant(socketId, { prompt: data.prompt });
                     // Emit prompt update to screen room
                     broadcastEvent('prompt:update', { id: socketId, prompt: data.prompt });
-                    broadcastEvent = null; // Non emettere state:update per ogni keystroke
+                    // Non emettere state:update per ogni keystroke (troppo frequente)
                 }
                 break;
 
@@ -120,7 +120,7 @@ export default async function handler(req, res) {
                 if (state.status === 'VOTING' && state.participants[data.participantId]) {
                     const participant = state.participants[data.participantId];
                     newState = updateParticipant(data.participantId, { votes: participant.votes + 1 });
-                    broadcastEvent = { type: 'state:update', data: newState };
+                    shouldBroadcastState = true;
                 }
                 break;
 
@@ -128,9 +128,9 @@ export default async function handler(req, res) {
                 return res.status(400).json({ error: 'Unknown action' });
         }
 
-        // Broadcast event to all clients via SSE
-        if (broadcastEvent) {
-            broadcastEvent(broadcastEvent.type, broadcastEvent.data);
+        // Broadcast state update to all clients via SSE
+        if (shouldBroadcastState) {
+            broadcastEvent('state:update', newState);
         }
 
         return res.status(200).json({ success: true, state: newState });
