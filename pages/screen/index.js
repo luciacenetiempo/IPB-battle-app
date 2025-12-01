@@ -35,11 +35,15 @@ export default function Screen() {
 
         socket.on('prompt:update', (data) => {
             console.log('[Screen] Prompt update received:', data);
-            if (data && data.id && data.prompt !== undefined) {
-                setLocalPrompts(prev => ({
-                    ...prev,
-                    [data.id]: data.prompt
-                }));
+            if (data && data.id !== undefined && data.prompt !== undefined) {
+                setLocalPrompts(prev => {
+                    const updated = {
+                        ...prev,
+                        [data.id]: data.prompt
+                    };
+                    console.log('[Screen] Updated localPrompts for', data.id, 'length:', data.prompt?.length);
+                    return updated;
+                });
             }
         });
 
@@ -80,7 +84,8 @@ export default function Screen() {
                             {/* SHOW PROMPT IF WRITING OR GENERATING */}
                             {!isVoting && (
                                 <div className={styles.promptDisplay}>
-                                    {localPrompts[p.id] || p.prompt || ''}<span className={styles.cursor}></span>
+                                    {/* Mostra sempre il prompt più aggiornato da localPrompts o dallo stato */}
+                                    {(localPrompts[p.id] !== undefined ? localPrompts[p.id] : (p.prompt || ''))}<span className={styles.cursor}></span>
                                 </div>
                             )}
 

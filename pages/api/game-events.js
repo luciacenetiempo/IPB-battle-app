@@ -125,11 +125,30 @@ export default async function handler(req, res) {
                     // Emit prompt update to screen room
                     console.log('[GameEvents] Broadcasting prompt:update for', socketId, 'prompt length:', data.prompt?.length);
                     broadcastEvent('prompt:update', { id: socketId, prompt: data.prompt });
-                    // Emetti anche state:update periodicamente (ogni 2 secondi) per sincronizzazione
-                    // Questo è un fallback per Vercel serverless dove il broadcast potrebbe non funzionare
-                    if (!state._lastPromptBroadcast || Date.now() - state._lastPromptBroadcast > 2000) {
+                    
+                    // Emetti sempre state:update con debounce di 200ms per sincronizzazione in tempo reale
+                    // Questo è necessario per Vercel serverless dove il broadcast diretto potrebbe non funzionare tra istanze
+                    const now = Date.now();
+                    const lastBroadcast = gameState._lastPromptBroadcast || 0;
+                    const timeSinceLastBroadcast = now - lastBroadcast;
+                    
+                    if (timeSinceLastBroadcast > 200) {
+                        // Broadcast immediato
                         shouldBroadcastState = true;
-                        newState._lastPromptBroadcast = Date.now();
+                        gameState._lastPromptBroadcast = now;
+                        newState._lastPromptBroadcast = now;
+                    } else {
+                        // Programma un broadcast dopo il debounce
+                        const delay = 200 - timeSinceLastBroadcast;
+                        if (gameState._pendingPromptBroadcast) {
+                            clearTimeout(gameState._pendingPromptBroadcast);
+                        }
+                        gameState._pendingPromptBroadcast = setTimeout(() => {
+                            const currentState = getGameState();
+                            broadcastEvent('state:update', currentState);
+                            gameState._lastPromptBroadcast = Date.now();
+                            gameState._pendingPromptBroadcast = null;
+                        }, delay);
                     }
                 }
                 break;
