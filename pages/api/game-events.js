@@ -1,24 +1,14 @@
-// API route per gestire eventi del gioco (POST per azioni, GET per polling)
+// API route per gestire eventi del gioco (POST per azioni)
 import { getGameState, updateGameState, addParticipant, updateParticipant, setGameState } from '../../lib/game-state';
-
-// Store per eventi in attesa (polling)
-const pendingEvents = new Map(); // socketId -> array di eventi
+import { broadcastEvent } from './game-stream';
 
 export default async function handler(req, res) {
     const { method } = req;
     const { action, socketId, data } = req.body || {};
 
-    if (method === 'GET') {
-        // Polling per eventi
-        const { socketId: pollSocketId } = req.query;
-        if (!pollSocketId) {
-            return res.status(400).json({ error: 'socketId required' });
-        }
-
-        const events = pendingEvents.get(pollSocketId) || [];
-        pendingEvents.set(pollSocketId, []); // Clear events after reading
-
-        return res.status(200).json({ events, state: getGameState() });
+    // Solo POST è supportato (SSE gestisce gli aggiornamenti)
+    if (method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed' });
     }
 
     if (method === 'POST') {
@@ -85,7 +75,7 @@ export default async function handler(req, res) {
                 break;
 
             case 'participant:join':
-                if (!state.validTokens.includes(data.token)) {
+                if (!state.validTokens || !state.validTokens.includes(data.token)) {
                     return res.status(400).json({ error: 'INVALID TOKEN' });
                 }
                 const existing = Object.values(state.participants).find(p => p.token === data.token);
@@ -112,13 +102,17 @@ export default async function handler(req, res) {
                         timerStartTime: Date.now()
                     });
                 }
-                broadcastEvent = { type: 'participant:joined', data: { id: socketId, name: newState.participants[socketId].name, color: assignedColor } };
+                // Emit both events
+                broadcastEvent('participant:joined', { id: socketId, name: newState.participants[socketId].name, color: assignedColor });
+                broadcastEvent = { type: 'state:update', data: newState };
                 break;
 
             case 'participant:update_prompt':
                 if (state.participants[socketId] && state.status === 'WRITING') {
                     newState = updateParticipant(socketId, { prompt: data.prompt });
-                    broadcastEvent = { type: 'prompt:update', data: { id: socketId, prompt: data.prompt } };
+                    // Emit prompt update to screen room
+                    broadcastEvent('prompt:update', { id: socketId, prompt: data.prompt });
+                    broadcastEvent = null; // Non emettere state:update per ogni keystroke
                 }
                 break;
 
@@ -134,13 +128,9 @@ export default async function handler(req, res) {
                 return res.status(400).json({ error: 'Unknown action' });
         }
 
-        // Broadcast event to all clients
+        // Broadcast event to all clients via SSE
         if (broadcastEvent) {
-            pendingEvents.forEach((events, id) => {
-                if (id !== socketId) {
-                    events.push(broadcastEvent);
-                }
-            });
+            broadcastEvent(broadcastEvent.type, broadcastEvent.data);
         }
 
         return res.status(200).json({ success: true, state: newState });
