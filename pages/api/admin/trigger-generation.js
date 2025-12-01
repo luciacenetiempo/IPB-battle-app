@@ -93,9 +93,9 @@ export default async function handler(req, res) {
         const generationPromises = participants.map(async (p) => {
             if (p.prompt && p.prompt.trim() !== '') {
                 try {
-                    await addLog({ msg: `Creating prediction for ${p.name} (${p.id})`, type: 'info' });
+                    await addLog({ msg: `Creating prediction for ${p.name} (${p.id}) with FLUX.2 [dev]`, type: 'info' });
                     
-                    const imageUrl = await generateWithModel('google/nano-banana-pro', p.prompt, replicate);
+                    const imageUrl = await generateWithModel('black-forest-labs/flux-2-dev', p.prompt, replicate);
                     
                     // Update participant image
                     const currentState = await getGameState();
