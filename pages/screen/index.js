@@ -13,10 +13,7 @@ export default function Screen() {
 
         socket.on('state:update', (state) => {
             console.log('[Screen] State update received:', state.status, 'Participants:', Object.keys(state.participants || {}).length);
-            setGameState(prevState => {
-                // Mantieni lo stato precedente per il fallback dei prompt
-                return state;
-            });
+            setGameState(state);
             // Sync prompts from state on full update - questo assicura che i prompt siano sempre aggiornati
             const prompts = {};
             Object.values(state.participants || {}).forEach(p => {
@@ -42,27 +39,36 @@ export default function Screen() {
         });
 
         socket.on('prompt:update', (data) => {
-            console.log('[Screen] Prompt update received:', data, 'Full data:', JSON.stringify(data), 'gameState:', gameState?.participants?.[data?.id]);
+            console.log('[Screen] Prompt update received:', data, 'Full data:', JSON.stringify(data), 'has prompt:', 'prompt' in data, 'prompt value:', data?.prompt);
             if (data && data.id !== undefined) {
-                // Prendi il prompt dall'evento o dallo stato corrente
-                let prompt = data.prompt;
-                if (prompt === undefined || prompt === null) {
-                    // Se il prompt non è presente nell'evento, prendilo dallo stato
-                    prompt = gameState?.participants?.[data.id]?.prompt;
-                    console.log('[Screen] Prompt not in event, taking from state:', prompt?.substring(0, 50));
-                }
+                // Prendi il prompt dall'evento - potrebbe essere una stringa vuota, ma deve essere presente
+                const prompt = data.prompt;
                 
-                if (prompt !== undefined && prompt !== null) {
+                // Aggiorna sempre, anche se il prompt è una stringa vuota
+                if (prompt !== undefined) {
                     setLocalPrompts(prev => {
                         const updated = {
                             ...prev,
-                            [data.id]: prompt
+                            [data.id]: prompt || ''
                         };
-                        console.log('[Screen] Updated localPrompts for', data.id, 'prompt length:', prompt?.length, 'preview:', prompt?.substring(0, 50));
+                        console.log('[Screen] Updated localPrompts for', data.id, 'prompt length:', prompt?.length || 0, 'preview:', (prompt || '').substring(0, 50));
                         return updated;
                     });
                 } else {
-                    console.warn('[Screen] Prompt update received but no prompt found for', data.id, 'in event or state');
+                    // Se il prompt non è nell'evento, aggiorna dallo stato corrente usando setState callback
+                    setGameState(currentState => {
+                        if (currentState?.participants?.[data.id]?.prompt !== undefined) {
+                            const prompt = currentState.participants[data.id].prompt;
+                            setLocalPrompts(prev => {
+                                const updated = { ...prev, [data.id]: prompt || '' };
+                                console.log('[Screen] Updated localPrompts from state for', data.id, 'prompt length:', prompt?.length || 0);
+                                return updated;
+                            });
+                        } else {
+                            console.warn('[Screen] Prompt update received but no prompt found for', data.id, 'in event or state');
+                        }
+                        return currentState;
+                    });
                 }
             }
         });
