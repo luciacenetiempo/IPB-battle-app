@@ -21,7 +21,7 @@ const generateWithModel = async (model, prompt, replicate) => {
     } else if (model === 'black-forest-labs/flux-2-dev') {
         input = {
             prompt: prompt.trim(),
-            aspect_ratio: '16:9',
+            aspect_ratio: '1:1',
             output_format: 'webp',
             output_quality: 90
         };

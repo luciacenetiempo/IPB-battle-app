@@ -2,9 +2,85 @@
 import { getGameState, updateGameState, addParticipant, updateParticipant, setGameState, setOnTimerZeroCallback } from '../../lib/game-state';
 import { broadcastEvent } from './game-stream';
 
+// Helper per inviare log al pannello admin
+function sendAdminLog(msg, type = 'info') {
+    const log = {
+        timestamp: new Date().toLocaleTimeString('it-IT'),
+        msg: msg,
+        type: type
+    };
+    broadcastEvent('admin:log', log);
+    console.log(`[AdminLog] [${type.toUpperCase()}] ${msg}`);
+}
+
+// Funzione per triggerare la generazione (non bloccante)
+async function triggerGeneration(state) {
+    const Replicate = require('replicate');
+    const replicate = new Replicate({
+        auth: process.env.REPLICATE_API_TOKEN,
+    });
+
+    const participants = Object.values(state.participants);
+    const participantsWithPrompts = participants.filter(p => p.prompt && p.prompt.trim() !== '');
+    
+    if (participantsWithPrompts.length === 0) {
+        sendAdminLog('⚠️ Nessun prompt disponibile per la generazione', 'warning');
+        return;
+    }
+
+    sendAdminLog(`🚀 Avvio generazione immagini per ${participantsWithPrompts.length} partecipante/i...`, 'info');
+    
+    for (const p of participantsWithPrompts) {
+        try {
+            sendAdminLog(`📝 Inizio generazione per ${p.name}: "${p.prompt.substring(0, 50)}${p.prompt.length > 50 ? '...' : ''}"`, 'info');
+            
+            const startTime = Date.now();
+            let prediction = await replicate.predictions.create({
+                model: "black-forest-labs/flux-2-dev",
+                input: {
+                    prompt: p.prompt.trim(),
+                    aspect_ratio: '1:1',
+                    output_format: 'webp',
+                    output_quality: 90
+                }
+            });
+
+            sendAdminLog(`⏳ Predizione creata per ${p.name} (ID: ${prediction.id.substring(0, 8)}...)`, 'info');
+
+            let pollCount = 0;
+            while (prediction.status !== 'succeeded' && prediction.status !== 'failed' && prediction.status !== 'canceled') {
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                prediction = await replicate.predictions.get(prediction.id);
+                pollCount++;
+                
+                if (pollCount % 5 === 0) { // Log ogni 10 secondi (5 poll * 2s)
+                    sendAdminLog(`⏳ ${p.name}: generazione in corso... (${prediction.status}, tentativo ${pollCount})`, 'info');
+                }
+            }
+
+            const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+
+            if (prediction.status === 'succeeded') {
+                const { updateParticipant } = require('../../lib/game-state');
+                const imageUrl = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output;
+                updateParticipant(p.id, { image: imageUrl });
+                sendAdminLog(`✅ Immagine generata con successo per ${p.name} (${duration}s)`, 'success');
+            } else {
+                sendAdminLog(`❌ Generazione fallita per ${p.name}: ${prediction.status}`, 'error');
+            }
+        } catch (error) {
+            sendAdminLog(`❌ Errore durante la generazione per ${p.name}: ${error.message}`, 'error');
+            console.error(`[GameEvents] Error generating for ${p.name}:`, error);
+        }
+    }
+    
+    sendAdminLog(`✨ Generazione completata per tutti i partecipanti`, 'success');
+}
+
 // Configura il callback per triggerare la generazione quando il timer arriva a 0
 setOnTimerZeroCallback(async (state) => {
     console.log('[GameEvents] Timer reached zero, triggering generation automatically');
+    sendAdminLog('⏰ Timer scaduto! Avvio generazione automatica...', 'info');
     await triggerGeneration(state);
     // Broadcast lo stato aggiornato
     broadcastEvent('state:update', getGameState());
@@ -56,6 +132,7 @@ export default async function handler(req, res) {
             case 'admin:trigger_generation':
                 // La generazione viene gestita in un endpoint separato
                 // Qui aggiorniamo solo lo stato
+                sendAdminLog('🔧 Generazione avviata manualmente dall\'admin', 'info');
                 newState = updateGameState({ 
                     status: 'GENERATING',
                     isTimerRunning: false,
@@ -65,6 +142,7 @@ export default async function handler(req, res) {
                 // Trigger generazione in background (non bloccante)
                 triggerGeneration(newState).catch(err => {
                     console.error('[GameEvents] Generation error:', err);
+                    sendAdminLog(`❌ Errore critico durante la generazione: ${err.message}`, 'error');
                 });
                 break;
 
@@ -239,40 +317,4 @@ function generateTokens(count) {
     return tokens;
 }
 
-// Funzione per triggerare la generazione (non bloccante)
-async function triggerGeneration(state) {
-    const Replicate = require('replicate');
-    const replicate = new Replicate({
-        auth: process.env.REPLICATE_API_TOKEN,
-    });
-
-    const participants = Object.values(state.participants);
-    
-    for (const p of participants) {
-        if (p.prompt && p.prompt.trim() !== '') {
-            try {
-                let prediction = await replicate.predictions.create({
-                    model: "google/nano-banana-pro",
-                    input: {
-                        prompt: p.prompt,
-                        num_inference_steps: 25,
-                        guidance_scale: 7.5
-                    }
-                });
-
-                while (prediction.status !== 'succeeded' && prediction.status !== 'failed' && prediction.status !== 'canceled') {
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-                    prediction = await replicate.predictions.get(prediction.id);
-                }
-
-                if (prediction.status === 'succeeded') {
-                    const { updateParticipant } = require('../../lib/game-state');
-                    updateParticipant(p.id, { image: prediction.output });
-                }
-            } catch (error) {
-                console.error(`[GameEvents] Error generating for ${p.name}:`, error);
-            }
-        }
-    }
-}
 
