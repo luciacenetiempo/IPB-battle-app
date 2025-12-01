@@ -1,6 +1,14 @@
 // API route per gestire eventi del gioco (POST per azioni)
-import { getGameState, updateGameState, addParticipant, updateParticipant, setGameState } from '../../lib/game-state';
+import { getGameState, updateGameState, addParticipant, updateParticipant, setGameState, setOnTimerZeroCallback } from '../../lib/game-state';
 import { broadcastEvent } from './game-stream';
+
+// Configura il callback per triggerare la generazione quando il timer arriva a 0
+setOnTimerZeroCallback(async (state) => {
+    console.log('[GameEvents] Timer reached zero, triggering generation automatically');
+    await triggerGeneration(state);
+    // Broadcast lo stato aggiornato
+    broadcastEvent('state:update', getGameState());
+});
 
 export default async function handler(req, res) {
     const { method } = req;
@@ -115,8 +123,14 @@ export default async function handler(req, res) {
                 if (state.participants[socketId] && state.status === 'WRITING') {
                     newState = updateParticipant(socketId, { prompt: data.prompt });
                     // Emit prompt update to screen room
+                    console.log('[GameEvents] Broadcasting prompt:update for', socketId, 'prompt length:', data.prompt?.length);
                     broadcastEvent('prompt:update', { id: socketId, prompt: data.prompt });
-                    // Non emettere state:update per ogni keystroke (troppo frequente)
+                    // Emetti anche state:update periodicamente (ogni 2 secondi) per sincronizzazione
+                    // Questo è un fallback per Vercel serverless dove il broadcast potrebbe non funzionare
+                    if (!state._lastPromptBroadcast || Date.now() - state._lastPromptBroadcast > 2000) {
+                        shouldBroadcastState = true;
+                        newState._lastPromptBroadcast = Date.now();
+                    }
                 }
                 break;
 

@@ -66,13 +66,17 @@ export default async function handler(req, res) {
 // Funzione per broadcastare eventi a tutte le connessioni
 export function broadcastEvent(eventType, data) {
     const event = JSON.stringify({ type: eventType, data });
+    console.log(`[SSE] Broadcasting ${eventType} to ${connections.size} connections`);
+    let successCount = 0;
     connections.forEach((res, socketId) => {
         try {
             res.write(`data: ${event}\n\n`);
+            successCount++;
         } catch (error) {
             console.error(`[SSE] Error broadcasting to ${socketId}:`, error);
             connections.delete(socketId);
         }
     });
+    console.log(`[SSE] Successfully broadcasted to ${successCount} connections`);
 }
 

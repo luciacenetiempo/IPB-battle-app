@@ -12,24 +12,35 @@ export default function Screen() {
         socket.emit('join_room', 'screen');
 
         socket.on('state:update', (state) => {
+            console.log('[Screen] State update received:', state.status, 'Participants:', Object.keys(state.participants || {}).length);
             setGameState(state);
-            // Sync prompts from state on full update
+            // Sync prompts from state on full update - questo assicura che i prompt siano sempre aggiornati
             const prompts = {};
-            Object.values(state.participants).forEach(p => {
-                prompts[p.id] = p.prompt;
+            Object.values(state.participants || {}).forEach(p => {
+                if (p.prompt !== undefined && p.prompt !== null) {
+                    prompts[p.id] = p.prompt;
+                }
             });
-            setLocalPrompts(prompts);
+            setLocalPrompts(prev => {
+                // Merge con i prompt esistenti per non perdere aggiornamenti
+                const merged = { ...prev, ...prompts };
+                console.log('[Screen] Updated prompts:', Object.keys(merged));
+                return merged;
+            });
         });
 
         socket.on('timer:update', (data) => {
             setGameState(prev => prev ? ({ ...prev, ...data }) : null);
         });
 
-        socket.on('prompt:update', ({ id, prompt }) => {
-            setLocalPrompts(prev => ({
-                ...prev,
-                [id]: prompt
-            }));
+        socket.on('prompt:update', (data) => {
+            console.log('[Screen] Prompt update received:', data);
+            if (data && data.id && data.prompt !== undefined) {
+                setLocalPrompts(prev => ({
+                    ...prev,
+                    [data.id]: data.prompt
+                }));
+            }
         });
 
         return () => {
@@ -37,7 +48,7 @@ export default function Screen() {
             socket.off('timer:update');
             socket.off('prompt:update');
         };
-    }, []);
+    }, [socket]);
 
     if (!gameState) return <div className={styles.loading}>INITIALIZING...</div>;
 
@@ -69,7 +80,7 @@ export default function Screen() {
                             {/* SHOW PROMPT IF WRITING OR GENERATING */}
                             {!isVoting && (
                                 <div className={styles.promptDisplay}>
-                                    {localPrompts[p.id] || ''}<span className={styles.cursor}></span>
+                                    {localPrompts[p.id] || p.prompt || ''}<span className={styles.cursor}></span>
                                 </div>
                             )}
 
