@@ -84,12 +84,18 @@ export default async function handler(req, res) {
 
     const state = getGameState();
     
+    // Log per debugging
+    console.log('[CheckTimer] Called - status:', state.status, 'isTimerRunning:', state.isTimerRunning, 'timer:', state.timer, 'generationTriggered:', state.generationTriggered);
+    
     // Controlla se il timer è arrivato a 0 e lo status è ancora WRITING
     if (state.isTimerRunning && state.timerStartTime && state.status === 'WRITING') {
         const elapsed = Math.floor((Date.now() - state.timerStartTime) / 1000);
         const remaining = Math.max(0, state.timer - elapsed);
         
-        if (remaining === 0 && !state.generationTriggered) {
+        console.log('[CheckTimer] Timer check - elapsed:', elapsed, 'remaining:', remaining, 'generationTriggered:', state.generationTriggered);
+        
+        // Controlla anche se remaining è <= 0 (per gestire casi di arrotondamento)
+        if (remaining <= 0 && !state.generationTriggered) {
             console.log('[CheckTimer] Timer reached zero, triggering generation');
             sendAdminLog('⏰ Timer scaduto! Avvio generazione automatica...', 'info');
             
@@ -115,12 +121,28 @@ export default async function handler(req, res) {
                 state: newState 
             });
         }
+    } else {
+        // Log quando le condizioni non sono soddisfatte
+        if (!state.isTimerRunning) {
+            console.log('[CheckTimer] Timer not running');
+        }
+        if (!state.timerStartTime) {
+            console.log('[CheckTimer] No timerStartTime');
+        }
+        if (state.status !== 'WRITING') {
+            console.log('[CheckTimer] Status is not WRITING:', state.status);
+        }
+        if (state.generationTriggered) {
+            console.log('[CheckTimer] Generation already triggered');
+        }
     }
     
     return res.status(200).json({ 
         success: true, 
         timer: state.timer,
-        status: state.status 
+        status: state.status,
+        isTimerRunning: state.isTimerRunning,
+        generationTriggered: state.generationTriggered
     });
 }
 

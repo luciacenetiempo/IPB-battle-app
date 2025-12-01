@@ -79,12 +79,14 @@ async function triggerGeneration(state) {
 
 // Configura il callback per triggerare la generazione quando il timer arriva a 0
 setOnTimerZeroCallback(async (state) => {
-    console.log('[GameEvents] Timer reached zero, triggering generation automatically');
-    sendAdminLog('⏰ Timer scaduto! Avvio generazione automatica...', 'info');
+    console.log('[GameEvents] Timer reached zero callback called, triggering generation automatically');
+    sendAdminLog('⏰ Timer scaduto! Avvio generazione automatica (via callback)...', 'info');
     await triggerGeneration(state);
     // Broadcast lo stato aggiornato
     broadcastEvent('state:update', getGameState());
 });
+
+console.log('[GameEvents] onTimerZeroCallback configured');
 
 export default async function handler(req, res) {
     const { method } = req;
