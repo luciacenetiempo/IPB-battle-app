@@ -73,7 +73,8 @@ export default function Participant() {
     const handlePromptChange = (e) => {
         const newPrompt = e.target.value;
         setPrompt(newPrompt);
-        socket.emit('participant:update_prompt', newPrompt);
+        // Invia il prompt come oggetto per compatibilità con il server
+        socket.emit('participant:update_prompt', { prompt: newPrompt });
     };
 
     if (!joined) {

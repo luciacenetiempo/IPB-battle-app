@@ -162,16 +162,17 @@ export default async function handler(req, res) {
 
             case 'participant:update_prompt':
                 if (state.participants[socketId] && state.status === 'WRITING') {
-                    newState = updateParticipant(socketId, { prompt: data.prompt });
+                    // Il data potrebbe essere direttamente il prompt (stringa) o un oggetto con {prompt: ...}
+                    const promptValue = typeof data === 'string' ? data : (data.prompt || '');
+                    console.log('[GameEvents] participant:update_prompt received:', { socketId, promptType: typeof data, promptLength: promptValue.length, promptPreview: promptValue.substring(0, 50) });
+                    
+                    newState = updateParticipant(socketId, { prompt: promptValue });
                     // Emit prompt update to screen room - assicurati che il prompt sia sempre incluso
-                    // Usa stringa vuota se undefined/null per evitare che venga omesso dal JSON
-                    const promptValue = (data.prompt !== undefined && data.prompt !== null) ? String(data.prompt) : '';
-                    console.log('[GameEvents] Broadcasting prompt:update for', socketId, 'prompt length:', promptValue.length, 'prompt:', promptValue.substring(0, 50));
-                    // Crea un oggetto esplicito per assicurarsi che il campo prompt sia sempre presente
                     const promptUpdateData = {
                         id: socketId,
                         prompt: promptValue
                     };
+                    console.log('[GameEvents] Broadcasting prompt:update:', promptUpdateData);
                     broadcastEvent('prompt:update', promptUpdateData);
                     
                     // Emetti sempre state:update con debounce di 200ms per sincronizzazione in tempo reale
