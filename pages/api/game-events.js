@@ -174,13 +174,36 @@ export default async function handler(req, res) {
                     validTokensLength: state.validTokens ? state.validTokens.length : 0,
                     participantsCount: Object.keys(state.participants).length,
                     status: state.status,
-                    expectedCount: state.expectedParticipantCount
+                    expectedCount: state.expectedParticipantCount,
+                    round: state.round
                 });
                 
+                // Se lo stato è IDLE, significa che non è stato ancora avviato un round
+                if (state.status === 'IDLE') {
+                    console.error('[GameEvents] Cannot join: Game is in IDLE state. A round must be started first.');
+                    sendAdminLog('⚠️ Impossibile unirsi: il gioco è in stato IDLE. Avvia prima un round dall\'admin.', 'error');
+                    return res.status(400).json({ 
+                        error: 'GAME_NOT_STARTED',
+                        message: 'Il gioco non è stato ancora avviato. Attendi che l\'admin avvii un round.'
+                    });
+                }
+                
                 if (!state.validTokens || state.validTokens.length === 0) {
-                    console.error('[GameEvents] No valid tokens available. State:', JSON.stringify(state, null, 2));
-                    sendAdminLog('⚠️ Errore: Nessun token disponibile. Assicurati di aver avviato un round.', 'error');
-                    return res.status(400).json({ error: 'NO_TOKENS_AVAILABLE' });
+                    console.error('[GameEvents] No valid tokens available. State:', JSON.stringify({
+                        status: state.status,
+                        round: state.round,
+                        validTokens: state.validTokens,
+                        expectedCount: state.expectedParticipantCount
+                    }, null, 2));
+                    sendAdminLog(`⚠️ Errore: Nessun token disponibile (Status: ${state.status}, Round: ${state.round}). Assicurati di aver avviato un round.`, 'error');
+                    return res.status(400).json({ 
+                        error: 'NO_TOKENS_AVAILABLE',
+                        message: 'Nessun token disponibile. Assicurati che l\'admin abbia avviato un round.',
+                        state: {
+                            status: state.status,
+                            round: state.round
+                        }
+                    });
                 }
                 
                 if (!data.token || !state.validTokens.includes(data.token.toUpperCase())) {
