@@ -1,38 +1,41 @@
-import { useEffect, useState, useRef } from 'react';
-import { pollGameState } from '../../lib/api';
+import { useEffect, useState } from 'react';
+import { getSocket } from '../../lib/socket';
 import styles from '../../styles/Screen.module.css';
 import Logo from '../../components/Logo';
 
 export default function Screen() {
     const [gameState, setGameState] = useState(null);
     const [localPrompts, setLocalPrompts] = useState({});
-    const pollingIntervalRef = useRef(null);
+    const socket = getSocket();
 
     useEffect(() => {
-        const pollState = async () => {
-            try {
-                const state = await pollGameState();
-                setGameState(state);
-                
-                // Sync prompts from state
-                const prompts = {};
-                Object.values(state.participants).forEach(p => {
-                    prompts[p.id] = p.prompt;
-                });
-                setLocalPrompts(prompts);
-            } catch (error) {
-                console.error('[Screen] Error polling state:', error);
-            }
-        };
+        socket.emit('join_room', 'screen');
 
-        pollState();
-        // Poll every 500ms for real-time updates
-        pollingIntervalRef.current = setInterval(pollState, 500);
+        socket.on('state:update', (state) => {
+            setGameState(state);
+            // Sync prompts from state on full update
+            const prompts = {};
+            Object.values(state.participants).forEach(p => {
+                prompts[p.id] = p.prompt;
+            });
+            setLocalPrompts(prompts);
+        });
+
+        socket.on('timer:update', (data) => {
+            setGameState(prev => prev ? ({ ...prev, ...data }) : null);
+        });
+
+        socket.on('prompt:update', ({ id, prompt }) => {
+            setLocalPrompts(prev => ({
+                ...prev,
+                [id]: prompt
+            }));
+        });
 
         return () => {
-            if (pollingIntervalRef.current) {
-                clearInterval(pollingIntervalRef.current);
-            }
+            socket.off('state:update');
+            socket.off('timer:update');
+            socket.off('prompt:update');
         };
     }, []);
 

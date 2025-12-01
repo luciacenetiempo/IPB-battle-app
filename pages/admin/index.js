@@ -1,5 +1,5 @@
-import { useEffect, useState, useRef } from 'react';
-import { pollGameState, adminStartRound, adminStopTimer, adminTriggerGeneration, adminStartVoting, adminGetLogs } from '../../lib/api';
+import { useEffect, useState } from 'react';
+import { getSocket } from '../../lib/socket';
 import styles from '../../styles/Admin.module.css';
 import Logo from '../../components/Logo';
 
@@ -8,9 +8,10 @@ export default function Admin() {
     const [themeInput, setThemeInput] = useState('');
     const [timerDuration, setTimerDuration] = useState(60);
     const [participantCount, setParticipantCount] = useState(2);
+    const socket = getSocket();
+
     const [logs, setLogs] = useState([]);
-    const logsEndRef = useRef(null);
-    const pollingIntervalRef = useRef(null);
+    const logsEndRef = require('react').useRef(null);
 
     const scrollToBottom = () => {
         logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -20,118 +21,51 @@ export default function Admin() {
         scrollToBottom();
     }, [logs]);
 
-    // Poll game state
     useEffect(() => {
-        let lastTimerValue = null;
-        let autoTriggered = false;
+        // Join admin room to receive logs
+        socket.emit('join_room', 'admin');
+        console.log('[Admin] Joined admin room');
 
-        const pollState = async () => {
-            try {
-                const state = await pollGameState();
-                setGameState(state);
-                if (state.theme) setThemeInput(state.theme);
+        socket.on('state:update', (state) => {
+            setGameState(state);
+            if (state.theme) setThemeInput(state.theme);
+        });
 
-                // Auto-trigger generation when timer reaches 0
-                if (state.status === 'WRITING' && 
-                    state.timer === 0 && 
-                    state.isTimerRunning && 
-                    lastTimerValue !== 0 &&
-                    !autoTriggered) {
-                    autoTriggered = true;
-                    console.log('[Admin] Timer reached 0, auto-triggering generation...');
-                    try {
-                        const newState = await adminTriggerGeneration();
-                        setGameState(newState);
-                    } catch (error) {
-                        console.error('[Admin] Error auto-triggering generation:', error);
-                        autoTriggered = false;
-                    }
-                }
+        socket.on('timer:update', (data) => {
+            setGameState(prev => ({ ...prev, ...data }));
+        });
 
-                // Reset auto-trigger flag when timer starts again
-                if (state.timer > 0 || state.status !== 'WRITING') {
-                    autoTriggered = false;
-                }
-
-                lastTimerValue = state.timer;
-            } catch (error) {
-                console.error('[Admin] Error polling state:', error);
-            }
-        };
-
-        // Initial load
-        pollState();
-
-        // Poll every 500ms for real-time updates
-        pollingIntervalRef.current = setInterval(pollState, 500);
+        socket.on('admin:log', (log) => {
+            console.log('[Admin] Received log:', log);
+            setLogs(prev => [...prev, log]);
+        });
 
         return () => {
-            if (pollingIntervalRef.current) {
-                clearInterval(pollingIntervalRef.current);
-            }
+            socket.off('state:update');
+            socket.off('timer:update');
+            socket.off('admin:log');
         };
     }, []);
 
-    // Poll logs
-    useEffect(() => {
-        const pollLogs = async () => {
-            try {
-                const newLogs = await adminGetLogs();
-                setLogs(newLogs);
-            } catch (error) {
-                console.error('[Admin] Error polling logs:', error);
-            }
-        };
-
-        pollLogs();
-        const logsInterval = setInterval(pollLogs, 1000);
-
-        return () => clearInterval(logsInterval);
-    }, []);
-
-    const startRound = async () => {
-        try {
-            const newState = await adminStartRound({
-                theme: themeInput,
-                timer: timerDuration,
-                participantCount: participantCount
-            });
-            setGameState(newState);
-        } catch (error) {
-            console.error('[Admin] Error starting round:', error);
-            alert('Errore: ' + error.message);
-        }
+    const startRound = () => {
+        socket.emit('admin:start_round', {
+            theme: themeInput,
+            timer: timerDuration,
+            participantCount: participantCount
+        });
     };
 
-    const stopTimer = async () => {
-        try {
-            const newState = await adminStopTimer();
-            setGameState(newState);
-        } catch (error) {
-            console.error('[Admin] Error stopping timer:', error);
-            alert('Errore: ' + error.message);
-        }
+    const stopTimer = () => {
+        socket.emit('admin:stop_timer');
     };
 
-    const triggerGeneration = async () => {
+    const triggerGeneration = () => {
         console.log('[Admin] Triggering generation...');
-        try {
-            const newState = await adminTriggerGeneration();
-            setGameState(newState);
-        } catch (error) {
-            console.error('[Admin] Error triggering generation:', error);
-            alert('Errore: ' + error.message);
-        }
+        socket.emit('admin:trigger_generation');
     };
 
-    const startVoting = async () => {
-        try {
-            const newState = await adminStartVoting();
-            setGameState(newState);
-        } catch (error) {
-            console.error('[Admin] Error starting voting:', error);
-            alert('Errore: ' + error.message);
-        }
+    const startVoting = () => {
+        socket.emit('admin:start_voting');
     };
 
     if (!gameState) return <div className={styles.container}>Loading...</div>;

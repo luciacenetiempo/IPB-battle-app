@@ -1,4 +1,7 @@
-import Replicate from 'replicate';
+// API route per Vercel - Test Generation
+// Questo endpoint funziona sia su Vercel che in locale
+
+const Replicate = require('replicate');
 
 // Helper function to generate image with a single model
 const generateWithModel = async (model, prompt, replicate) => {
@@ -37,11 +40,7 @@ const generateWithModel = async (model, prompt, replicate) => {
 
     // Poll for result
     let pollCount = 0;
-    const maxPolls = 120; // Max 4 minutes (120 * 2s)
     while (prediction.status !== 'succeeded' && prediction.status !== 'failed' && prediction.status !== 'canceled') {
-        if (pollCount >= maxPolls) {
-            throw new Error('Timeout: Generation took too long');
-        }
         await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2s
         prediction = await replicate.predictions.get(prediction.id);
         pollCount++;
@@ -66,7 +65,7 @@ const generateWithModel = async (model, prompt, replicate) => {
 };
 
 export default async function handler(req, res) {
-    // Only allow POST requests
+    // Solo POST è supportato
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed' });
     }
@@ -82,22 +81,11 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Prompt is required' });
     }
 
-    // Debug: log environment variable status (without exposing the token)
-    const hasToken = !!process.env.REPLICATE_API_TOKEN;
-    const tokenLength = process.env.REPLICATE_API_TOKEN ? process.env.REPLICATE_API_TOKEN.length : 0;
-    console.log('[TestAPI] REPLICATE_API_TOKEN check:', {
-        exists: hasToken,
-        length: tokenLength,
-        startsWith: process.env.REPLICATE_API_TOKEN ? process.env.REPLICATE_API_TOKEN.substring(0, 5) + '...' : 'N/A'
-    });
-
     if (!process.env.REPLICATE_API_TOKEN) {
-        console.error('[TestAPI] REPLICATE_API_TOKEN not configured');
-        console.error('[TestAPI] Available env vars:', Object.keys(process.env).filter(k => k.includes('REPLICATE') || k.includes('API')));
         return res.status(500).json({ error: 'REPLICATE_API_TOKEN not configured' });
     }
 
-    // Initialize Replicate
+    // Inizializza Replicate
     const replicate = new Replicate({
         auth: process.env.REPLICATE_API_TOKEN,
     });
@@ -220,9 +208,4 @@ export default async function handler(req, res) {
         });
     }
 }
-
-// Increase timeout for Vercel (max 60s on Pro, 10s on Hobby)
-export const config = {
-    maxDuration: 60,
-};
 

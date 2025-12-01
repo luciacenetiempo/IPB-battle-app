@@ -48,29 +48,10 @@ export default function TestAPI() {
                 body: JSON.stringify(requestBody),
             });
 
-            // Check if response has content before parsing JSON
-            const contentType = response.headers.get('content-type');
-            if (!contentType || !contentType.includes('application/json')) {
-                const text = await response.text();
-                throw new Error(text || `Errore: risposta non valida (status ${response.status})`);
-            }
-
-            // Check if response body is empty
-            const text = await response.text();
-            if (!text || text.trim() === '') {
-                throw new Error(`Errore: risposta vuota dal server (status ${response.status})`);
-            }
-
-            let data;
-            try {
-                data = JSON.parse(text);
-            } catch (parseError) {
-                console.error('Errore nel parsing JSON:', parseError);
-                throw new Error(`Errore: risposta non valida dal server (status ${response.status})`);
-            }
+            const data = await response.json();
 
             if (!response.ok) {
-                throw new Error(data.error || `Errore nella generazione (status ${response.status})`);
+                throw new Error(data.error || 'Errore nella generazione');
             }
 
             if (data.success) {

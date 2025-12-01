@@ -1,5 +1,5 @@
-import { useEffect, useState, useRef } from 'react';
-import { pollGameState, voteCast } from '../../lib/api';
+import { useEffect, useState } from 'react';
+import { getSocket } from '../../lib/socket';
 import styles from '../../styles/Vote.module.css';
 import Logo from '../../components/Logo';
 
@@ -7,26 +7,15 @@ export default function Vote() {
     const [gameState, setGameState] = useState(null);
     const [hasVoted, setHasVoted] = useState(false);
     const [selectedId, setSelectedId] = useState(null);
-    const pollingIntervalRef = useRef(null);
+    const socket = getSocket();
 
     useEffect(() => {
-        const pollState = async () => {
-            try {
-                const state = await pollGameState();
-                setGameState(state);
-            } catch (error) {
-                console.error('[Vote] Error polling state:', error);
-            }
-        };
-
-        pollState();
-        // Poll every 1 second for voting page
-        pollingIntervalRef.current = setInterval(pollState, 1000);
+        socket.on('state:update', (state) => {
+            setGameState(state);
+        });
 
         return () => {
-            if (pollingIntervalRef.current) {
-                clearInterval(pollingIntervalRef.current);
-            }
+            socket.off('state:update');
         };
     }, []);
 
@@ -35,25 +24,18 @@ export default function Vote() {
         setSelectedId(id);
     };
 
-    const confirmVote = async () => {
-        if (!selectedId) return;
-
-        try {
-            await voteCast(selectedId);
+    const confirmVote = () => {
+        if (selectedId) {
+            socket.emit('vote:cast', selectedId);
             setHasVoted(true);
-            // Persist vote to avoid refresh-spam (only on client)
-            if (gameState && typeof window !== 'undefined') {
-                localStorage.setItem(`voted_round_${gameState.round}`, 'true');
-            }
-        } catch (error) {
-            console.error('[Vote] Error casting vote:', error);
-            alert('Errore nel votare: ' + error.message);
+            // Persist vote to avoid refresh-spam (simple version)
+            localStorage.setItem(`voted_round_${gameState.round}`, 'true');
         }
     };
 
     // Check local storage on load/round change
     useEffect(() => {
-        if (gameState && typeof window !== 'undefined') {
+        if (gameState) {
             const voted = localStorage.getItem(`voted_round_${gameState.round}`);
             if (voted) setHasVoted(true);
         }
