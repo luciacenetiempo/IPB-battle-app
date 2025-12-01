@@ -41,8 +41,8 @@ export default function Vote() {
         try {
             await voteCast(selectedId);
             setHasVoted(true);
-            // Persist vote to avoid refresh-spam
-            if (gameState) {
+            // Persist vote to avoid refresh-spam (only on client)
+            if (gameState && typeof window !== 'undefined') {
                 localStorage.setItem(`voted_round_${gameState.round}`, 'true');
             }
         } catch (error) {
@@ -53,7 +53,7 @@ export default function Vote() {
 
     // Check local storage on load/round change
     useEffect(() => {
-        if (gameState) {
+        if (gameState && typeof window !== 'undefined') {
             const voted = localStorage.getItem(`voted_round_${gameState.round}`);
             if (voted) setHasVoted(true);
         }

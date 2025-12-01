@@ -8,8 +8,11 @@ export default function Participant() {
     const [prompt, setPrompt] = useState('');
     const [gameState, setGameState] = useState(null);
     const [participantId, setParticipantId] = useState(() => {
-        // Try to restore participant ID from localStorage
-        return localStorage.getItem('participantId') || null;
+        // Try to restore participant ID from localStorage (only on client)
+        if (typeof window !== 'undefined') {
+            return localStorage.getItem('participantId') || null;
+        }
+        return null;
     });
     const [token, setToken] = useState('');
     const [error, setError] = useState('');
@@ -19,6 +22,8 @@ export default function Participant() {
 
     // Try to reconnect on mount if we have a saved participantId
     useEffect(() => {
+        if (typeof window === 'undefined') return;
+
         const savedParticipantId = localStorage.getItem('participantId');
         const savedToken = localStorage.getItem('participantToken');
         const savedName = localStorage.getItem('participantName');
@@ -90,10 +95,12 @@ export default function Participant() {
                 setJoined(true);
                 setError('');
                 setParticipantId(result.participant.id);
-                // Save for reconnection
-                localStorage.setItem('participantId', result.participant.id);
-                localStorage.setItem('participantToken', token.toUpperCase());
-                localStorage.setItem('participantName', name.trim());
+                // Save for reconnection (only on client)
+                if (typeof window !== 'undefined') {
+                    localStorage.setItem('participantId', result.participant.id);
+                    localStorage.setItem('participantToken', token.toUpperCase());
+                    localStorage.setItem('participantName', name.trim());
+                }
                 setGameState(result.gameState);
                 setPrompt(result.participant.prompt || '');
             }
