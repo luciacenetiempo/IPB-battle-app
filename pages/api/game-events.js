@@ -303,10 +303,14 @@ export default async function handler(req, res) {
 
         // Broadcast state update to all clients via SSE
         if (shouldBroadcastState) {
+            console.log('[GameEvents] Broadcasting state update, validTokens:', newState.validTokens);
             broadcastEvent('state:update', newState);
         }
 
-        return res.status(200).json({ success: true, state: newState });
+        // Assicurati che lo stato restituito includa sempre i token
+        const responseState = getGameState();
+        console.log('[GameEvents] Returning state with validTokens:', responseState.validTokens);
+        return res.status(200).json({ success: true, state: responseState });
     }
 
     return res.status(405).json({ error: 'Method not allowed' });
