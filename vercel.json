@@ -1,0 +1,11 @@
+{
+  "functions": {
+    "pages/api/admin/trigger-generation.js": {
+      "maxDuration": 60
+    },
+    "pages/api/test-generation.js": {
+      "maxDuration": 60
+    }
+  }
+}
+

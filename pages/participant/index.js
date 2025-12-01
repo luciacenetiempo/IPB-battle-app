@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { getSocket } from '../../lib/socket';
+import { pollGameState, participantJoin, participantUpdatePrompt } from '../../lib/api';
 import styles from '../../styles/Participant.module.css';
 
 export default function Participant() {
@@ -7,62 +7,120 @@ export default function Participant() {
     const [name, setName] = useState('');
     const [prompt, setPrompt] = useState('');
     const [gameState, setGameState] = useState(null);
-    const socket = getSocket();
-    const textareaRef = useRef(null);
-
-    useEffect(() => {
-        socket.on('state:update', (state) => {
-            setGameState(state);
-            // If the server has a prompt for us (e.g. reconnect), update it
-            // Be careful not to overwrite local changes if typing fast, 
-            // but for simplicity/safety on reconnect, we sync.
-            if (state.participants[socket.id]) {
-                // Only update if significantly different or empty to avoid cursor jumps?
-                // For now, let's rely on local state for typing and only sync on initial load/reconnect
-            }
-        });
-
-        socket.on('timer:update', (data) => {
-            setGameState(prev => prev ? ({ ...prev, ...data }) : null);
-        });
-
-        return () => {
-            socket.off('state:update');
-            socket.off('timer:update');
-        };
-    }, []);
-
+    const [participantId, setParticipantId] = useState(() => {
+        // Try to restore participant ID from localStorage
+        return localStorage.getItem('participantId') || null;
+    });
     const [token, setToken] = useState('');
     const [error, setError] = useState('');
+    const textareaRef = useRef(null);
+    const pollingIntervalRef = useRef(null);
+    const promptUpdateTimeoutRef = useRef(null);
 
+    // Try to reconnect on mount if we have a saved participantId
     useEffect(() => {
-        socket.on('participant:joined', (data) => {
-            setJoined(true);
-            setError('');
-        });
+        const savedParticipantId = localStorage.getItem('participantId');
+        const savedToken = localStorage.getItem('participantToken');
+        const savedName = localStorage.getItem('participantName');
 
-        socket.on('error:join', (msg) => {
-            setError(msg);
-            setJoined(false);
-        });
-
-        return () => {
-            socket.off('participant:joined');
-            socket.off('error:join');
-        };
+        if (savedParticipantId && savedToken && savedName && !joined) {
+            // Try to reconnect
+            participantJoin({
+                token: savedToken,
+                name: savedName,
+                participantId: savedParticipantId,
+            }).then(result => {
+                if (result.success) {
+                    setJoined(true);
+                    setParticipantId(result.participant.id);
+                    setGameState(result.gameState);
+                    setPrompt(result.participant.prompt || '');
+                    setToken(savedToken);
+                    setName(savedName);
+                }
+            }).catch(() => {
+                // Reconnection failed, clear saved data
+                localStorage.removeItem('participantId');
+                localStorage.removeItem('participantToken');
+                localStorage.removeItem('participantName');
+            });
+        }
     }, []);
 
-    const handleJoin = (e) => {
+    // Poll game state when joined
+    useEffect(() => {
+        if (!joined || !participantId) return;
+
+        const pollState = async () => {
+            try {
+                const state = await pollGameState();
+                setGameState(state);
+                
+                // Sync prompt from server if we have a participant
+                if (state.participants[participantId] && !prompt) {
+                    setPrompt(state.participants[participantId].prompt || '');
+                }
+            } catch (error) {
+                console.error('[Participant] Error polling state:', error);
+            }
+        };
+
+        pollState();
+        pollingIntervalRef.current = setInterval(pollState, 500);
+
+        return () => {
+            if (pollingIntervalRef.current) {
+                clearInterval(pollingIntervalRef.current);
+            }
+        };
+    }, [joined, participantId]);
+
+    const handleJoin = async (e) => {
         e.preventDefault();
-        if (token.trim() && name.trim()) {
-            socket.emit('participant:join', { token: token.toUpperCase(), name: name.trim() });
+        if (!token.trim() || !name.trim()) return;
+
+        try {
+            const result = await participantJoin({
+                token: token.toUpperCase(),
+                name: name.trim(),
+                participantId: participantId, // For reconnection
+            });
+
+            if (result.success) {
+                setJoined(true);
+                setError('');
+                setParticipantId(result.participant.id);
+                // Save for reconnection
+                localStorage.setItem('participantId', result.participant.id);
+                localStorage.setItem('participantToken', token.toUpperCase());
+                localStorage.setItem('participantName', name.trim());
+                setGameState(result.gameState);
+                setPrompt(result.participant.prompt || '');
+            }
+        } catch (error) {
+            setError(error.message);
+            setJoined(false);
         }
     };
 
     const handlePromptChange = (e) => {
         const newPrompt = e.target.value;
         setPrompt(newPrompt);
-        socket.emit('participant:update_prompt', newPrompt);
+
+        // Debounce prompt updates
+        if (promptUpdateTimeoutRef.current) {
+            clearTimeout(promptUpdateTimeoutRef.current);
+        }
+
+        if (participantId) {
+            promptUpdateTimeoutRef.current = setTimeout(async () => {
+                try {
+                    await participantUpdatePrompt(participantId, newPrompt);
+                } catch (error) {
+                    console.error('[Participant] Error updating prompt:', error);
+                }
+            }, 300);
+        }
     };
 
     if (!joined) {
@@ -105,7 +163,7 @@ export default function Participant() {
     const isWriting = gameState.status === 'WRITING';
     // const isWriting = true; // Debug
 
-    const myColor = gameState.participants[socket.id]?.color || '#B6FF6C';
+    const myColor = participantId ? (gameState.participants[participantId]?.color || '#B6FF6C') : '#B6FF6C';
 
     return (
         <div className={styles.container} style={{ backgroundColor: myColor, color: 'black' }}>

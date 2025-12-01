@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { getSocket } from '../../lib/socket';
+import { useEffect, useState, useRef } from 'react';
+import { pollGameState, voteCast } from '../../lib/api';
 import styles from '../../styles/Vote.module.css';
 import Logo from '../../components/Logo';
 
@@ -7,15 +7,26 @@ export default function Vote() {
     const [gameState, setGameState] = useState(null);
     const [hasVoted, setHasVoted] = useState(false);
     const [selectedId, setSelectedId] = useState(null);
-    const socket = getSocket();
+    const pollingIntervalRef = useRef(null);
 
     useEffect(() => {
-        socket.on('state:update', (state) => {
-            setGameState(state);
-        });
+        const pollState = async () => {
+            try {
+                const state = await pollGameState();
+                setGameState(state);
+            } catch (error) {
+                console.error('[Vote] Error polling state:', error);
+            }
+        };
+
+        pollState();
+        // Poll every 1 second for voting page
+        pollingIntervalRef.current = setInterval(pollState, 1000);
 
         return () => {
-            socket.off('state:update');
+            if (pollingIntervalRef.current) {
+                clearInterval(pollingIntervalRef.current);
+            }
         };
     }, []);
 
@@ -24,12 +35,19 @@ export default function Vote() {
         setSelectedId(id);
     };
 
-    const confirmVote = () => {
-        if (selectedId) {
-            socket.emit('vote:cast', selectedId);
+    const confirmVote = async () => {
+        if (!selectedId) return;
+
+        try {
+            await voteCast(selectedId);
             setHasVoted(true);
-            // Persist vote to avoid refresh-spam (simple version)
-            localStorage.setItem(`voted_round_${gameState.round}`, 'true');
+            // Persist vote to avoid refresh-spam
+            if (gameState) {
+                localStorage.setItem(`voted_round_${gameState.round}`, 'true');
+            }
+        } catch (error) {
+            console.error('[Vote] Error casting vote:', error);
+            alert('Errore nel votare: ' + error.message);
         }
     };
 
