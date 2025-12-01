@@ -108,17 +108,22 @@ export default async function handler(req, res) {
 
         switch (action) {
             case 'admin:start_round':
+                const tokenCount = data.participantCount || 2;
+                const generatedTokens = generateTokens(tokenCount);
+                console.log('[GameEvents] Starting round - generating tokens:', generatedTokens);
+                sendAdminLog(`🎮 Round ${state.round + 1} avviato - Token generati: ${generatedTokens.join(', ')}`, 'info');
                 newState = updateGameState({
                     round: state.round + 1,
                     theme: data.theme,
                     status: 'WAITING_FOR_PLAYERS',
                     timer: data.timer || 60,
                     isTimerRunning: false,
-                    expectedParticipantCount: data.participantCount || 2,
-                    validTokens: generateTokens(data.participantCount || 2),
+                    expectedParticipantCount: tokenCount,
+                    validTokens: generatedTokens,
                     participants: {},
                     timerStartTime: null,
                     votingTimerStartTime: null,
+                    generationTriggered: false, // Reset flag
                 });
                 shouldBroadcastState = true;
                 break;
@@ -166,13 +171,15 @@ export default async function handler(req, res) {
                 console.log('[GameEvents] participant:join request:', { socketId, token: data.token, name: data.name });
                 console.log('[GameEvents] Current state:', { 
                     validTokens: state.validTokens, 
+                    validTokensLength: state.validTokens ? state.validTokens.length : 0,
                     participantsCount: Object.keys(state.participants).length,
                     status: state.status,
                     expectedCount: state.expectedParticipantCount
                 });
                 
                 if (!state.validTokens || state.validTokens.length === 0) {
-                    console.error('[GameEvents] No valid tokens available');
+                    console.error('[GameEvents] No valid tokens available. State:', JSON.stringify(state, null, 2));
+                    sendAdminLog('⚠️ Errore: Nessun token disponibile. Assicurati di aver avviato un round.', 'error');
                     return res.status(400).json({ error: 'NO_TOKENS_AVAILABLE' });
                 }
                 
@@ -315,7 +322,7 @@ function generateTokens(count) {
         }
         tokens.push(token);
     }
-    console.log('[GameEvents] Generated tokens:', tokens);
+    console.log('[GameEvents] Generated', count, 'tokens:', tokens);
     return tokens;
 }
 
