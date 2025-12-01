@@ -83,27 +83,68 @@ export default async function handler(req, res) {
                 break;
 
             case 'participant:join':
-                if (!state.validTokens || !state.validTokens.includes(data.token)) {
+                console.log('[GameEvents] participant:join request:', { socketId, token: data.token, name: data.name });
+                console.log('[GameEvents] Current state:', { 
+                    validTokens: state.validTokens, 
+                    participantsCount: Object.keys(state.participants).length,
+                    status: state.status,
+                    expectedCount: state.expectedParticipantCount
+                });
+                
+                if (!state.validTokens || state.validTokens.length === 0) {
+                    console.error('[GameEvents] No valid tokens available');
+                    return res.status(400).json({ error: 'NO_TOKENS_AVAILABLE' });
+                }
+                
+                if (!data.token || !state.validTokens.includes(data.token.toUpperCase())) {
+                    console.error('[GameEvents] Invalid token:', data.token, 'Valid tokens:', state.validTokens);
                     return res.status(400).json({ error: 'INVALID TOKEN' });
                 }
-                const existing = Object.values(state.participants).find(p => p.token === data.token);
+                
+                // Normalizza il token a uppercase per il confronto
+                const normalizedToken = data.token.toUpperCase();
+                const existing = Object.values(state.participants).find(p => p.token === normalizedToken);
+                
                 if (existing && existing.id !== socketId) {
+                    console.error('[GameEvents] Token already in use:', normalizedToken, 'by:', existing.id);
                     return res.status(400).json({ error: 'TOKEN ALREADY IN USE' });
                 }
+                
+                // Se il partecipante esiste già con lo stesso socketId, permettere il rejoin
+                if (existing && existing.id === socketId) {
+                    console.log('[GameEvents] Participant reconnecting with same socketId');
+                    // Aggiorna solo il nome se è cambiato
+                    if (data.name && data.name !== existing.name) {
+                        newState = updateParticipant(socketId, { name: data.name });
+                    } else {
+                        newState = state;
+                    }
+                    shouldBroadcastState = true;
+                    broadcastEvent('participant:joined', { id: socketId, name: newState.participants[socketId].name, color: newState.participants[socketId].color });
+                    break;
+                }
+                
                 const palette = ['#BEFA4F', '#E83399', '#5AA7B9', '#F5B700'];
                 const participantIndex = Object.keys(state.participants).length;
                 const assignedColor = palette[participantIndex % palette.length];
+                
+                console.log('[GameEvents] Adding participant:', { socketId, token: normalizedToken, name: data.name, index: participantIndex });
+                
                 newState = addParticipant(socketId, {
                     id: socketId,
-                    token: data.token,
+                    token: normalizedToken,
                     name: data.name || `Player ${participantIndex + 1}`,
                     prompt: '',
                     image: null,
                     votes: 0,
                     color: assignedColor
                 });
+                
+                console.log('[GameEvents] Participant added. New participants count:', Object.keys(newState.participants).length);
+                
                 // Check if all expected participants joined
                 if (Object.keys(newState.participants).length === newState.expectedParticipantCount && newState.status === 'WAITING_FOR_PLAYERS') {
+                    console.log('[GameEvents] All participants joined, starting WRITING phase');
                     // Aggiorna lo stato a WRITING con timer
                     const timerStartTime = Date.now();
                     newState = updateGameState({ 
@@ -193,6 +234,7 @@ function generateTokens(count) {
         }
         tokens.push(token);
     }
+    console.log('[GameEvents] Generated tokens:', tokens);
     return tokens;
 }
 

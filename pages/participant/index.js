@@ -62,7 +62,11 @@ export default function Participant() {
     const handleJoin = (e) => {
         e.preventDefault();
         if (token.trim() && name.trim()) {
-            socket.emit('participant:join', { token: token.toUpperCase(), name: name.trim() });
+            const normalizedToken = token.trim().toUpperCase();
+            console.log('[Participant] Attempting to join with token:', normalizedToken, 'name:', name.trim());
+            socket.emit('participant:join', { token: normalizedToken, name: name.trim() });
+        } else {
+            console.warn('[Participant] Cannot join: token or name missing');
         }
     };
 
