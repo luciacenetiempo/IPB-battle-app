@@ -56,7 +56,18 @@ export default async function handler(req, res) {
     }
 
     try {
+        // Debug: log environment variable status
+        const hasToken = !!process.env.REPLICATE_API_TOKEN;
+        const tokenLength = process.env.REPLICATE_API_TOKEN ? process.env.REPLICATE_API_TOKEN.length : 0;
+        console.log('[Generation] REPLICATE_API_TOKEN check:', {
+            exists: hasToken,
+            length: tokenLength,
+            startsWith: process.env.REPLICATE_API_TOKEN ? process.env.REPLICATE_API_TOKEN.substring(0, 5) + '...' : 'N/A'
+        });
+
         if (!process.env.REPLICATE_API_TOKEN) {
+            console.error('[Generation] REPLICATE_API_TOKEN not configured');
+            console.error('[Generation] Available env vars:', Object.keys(process.env).filter(k => k.includes('REPLICATE') || k.includes('API')));
             await addLog({ msg: '❌ ERROR: REPLICATE_API_TOKEN not found', type: 'error' });
             return res.status(500).json({ error: 'REPLICATE_API_TOKEN not configured' });
         }
