@@ -17,6 +17,8 @@ export default function Screen() {
             // Sync prompts from state on full update - questo assicura che i prompt siano sempre aggiornati
             const prompts = {};
             Object.values(state.participants || {}).forEach(p => {
+                // p.id è ora il token
+                const token = p.id || p.token;
                 // Includi anche prompt vuoti per mantenere la sincronizzazione
                 if (p.prompt !== undefined && p.prompt !== null) {
                     // Gestisce stringhe, oggetti annidati, ecc.
@@ -32,11 +34,11 @@ export default function Screen() {
                     }
                     // Assicurati che il prompt sia sempre una stringa
                     const promptStr = String(promptValue || '');
-                    prompts[p.id] = promptStr;
+                    prompts[token] = promptStr;
                     if (promptStr && promptStr.length > 0) {
-                        console.log('[Screen] Found prompt for', p.id, 'length:', promptStr.length, 'preview:', promptStr.substring(0, 30));
+                        console.log('[Screen] Found prompt for token', token, 'length:', promptStr.length, 'preview:', promptStr.substring(0, 30));
                     } else {
-                        console.log('[Screen] Prompt for', p.id, 'is empty or invalid, type:', typeof p.prompt, 'value:', p.prompt);
+                        console.log('[Screen] Prompt for token', token, 'is empty or invalid, type:', typeof p.prompt, 'value:', p.prompt);
                     }
                 }
             });
@@ -56,6 +58,9 @@ export default function Screen() {
         socket.on('prompt:update', (data) => {
             console.log('[Screen] Prompt update received:', data, 'Full data:', JSON.stringify(data), 'has prompt:', 'prompt' in data, 'prompt value:', data?.prompt);
             if (data && data.id !== undefined) {
+                // data.id è ora un token, non un socketId
+                const token = data.token || data.id;
+                
                 // Prendi il prompt dall'evento - potrebbe essere una stringa o un oggetto con {prompt: "..."}
                 let prompt = data.prompt;
                 
@@ -71,25 +76,25 @@ export default function Screen() {
                     setLocalPrompts(prev => {
                         const updated = {
                             ...prev,
-                            [data.id]: promptStr
+                            [token]: promptStr
                         };
-                        console.log('[Screen] Updated localPrompts for', data.id, 'prompt length:', promptStr.length, 'preview:', promptStr.substring(0, 50));
+                        console.log('[Screen] Updated localPrompts for token', token, 'prompt length:', promptStr.length, 'preview:', promptStr.substring(0, 50));
                         return updated;
                     });
                 } else {
                     // Se il prompt non è nell'evento, aggiorna dallo stato corrente usando setState callback
                     setGameState(currentState => {
-                        if (currentState?.participants?.[data.id]?.prompt !== undefined) {
-                            const prompt = currentState.participants[data.id].prompt;
+                        if (currentState?.participants?.[token]?.prompt !== undefined) {
+                            const prompt = currentState.participants[token].prompt;
                             // Assicurati che il prompt sia sempre una stringa
                             const promptStr = String(prompt || '');
                             setLocalPrompts(prev => {
-                                const updated = { ...prev, [data.id]: promptStr };
-                                console.log('[Screen] Updated localPrompts from state for', data.id, 'prompt length:', promptStr.length);
+                                const updated = { ...prev, [token]: promptStr };
+                                console.log('[Screen] Updated localPrompts from state for token', token, 'prompt length:', promptStr.length);
                                 return updated;
                             });
                         } else {
-                            console.warn('[Screen] Prompt update received but no prompt found for', data.id, 'in event or state');
+                            console.warn('[Screen] Prompt update received but no prompt found for token', token, 'in event or state');
                         }
                         return currentState;
                     });
@@ -136,9 +141,11 @@ export default function Screen() {
                                 <div className={styles.promptDisplay}>
                                     {/* Mostra sempre il prompt più aggiornato da localPrompts o dallo stato */}
                                     {(() => {
+                                        // p.id è ora il token
+                                        const token = p.id || p.token;
                                         let displayPrompt = '';
-                                        if (localPrompts[p.id] !== undefined) {
-                                            displayPrompt = typeof localPrompts[p.id] === 'string' ? localPrompts[p.id] : String(localPrompts[p.id] || '');
+                                        if (localPrompts[token] !== undefined) {
+                                            displayPrompt = typeof localPrompts[token] === 'string' ? localPrompts[token] : String(localPrompts[token] || '');
                                         } else if (p.prompt) {
                                             if (typeof p.prompt === 'string') {
                                                 displayPrompt = p.prompt;

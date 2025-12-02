@@ -1,5 +1,5 @@
 // API route per gestire eventi del gioco (POST per azioni)
-import { getGameState, updateGameState, addParticipant, updateParticipant, setGameState, setOnTimerZeroCallback } from '../../lib/game-state';
+import { getGameState, updateGameState, addParticipant, updateParticipant, updateParticipantBySocketId, getParticipantByToken, getTokenBySocketId, setGameState, setOnTimerZeroCallback } from '../../lib/game-state';
 import { broadcastEvent } from './game-stream';
 
 // Helper per inviare log al pannello admin
@@ -63,6 +63,7 @@ async function triggerGeneration(state) {
             if (prediction.status === 'succeeded') {
                 const { updateParticipant } = require('../../lib/game-state');
                 const imageUrl = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output;
+                // p.id è ora il token
                 updateParticipant(p.id, { image: imageUrl });
                 sendAdminLog(`✅ Immagine generata con successo per ${p.name} (${duration}s)`, 'success');
             } else {
@@ -112,6 +113,7 @@ export default async function handler(req, res) {
                 const generatedTokens = generateTokens(tokenCount);
                 console.log('[GameEvents] Starting round - generating tokens:', generatedTokens);
                 sendAdminLog(`🎮 Round ${state.round + 1} avviato - Token generati: ${generatedTokens.join(', ')}`, 'info');
+                // Pulisci i sessionSecret vecchi dal localStorage lato client (sarà gestito dal client quando riceve il nuovo stato)
                 newState = updateGameState({
                     round: state.round + 1,
                     theme: data.theme,
@@ -120,7 +122,7 @@ export default async function handler(req, res) {
                     isTimerRunning: false,
                     expectedParticipantCount: tokenCount,
                     validTokens: generatedTokens,
-                    participants: {},
+                    participants: {}, // Questo pulirà anche tutti i sessionSecret esistenti
                     timerStartTime: null,
                     votingTimerStartTime: null,
                     generationTriggered: false, // Reset flag
@@ -213,44 +215,70 @@ export default async function handler(req, res) {
                 
                 // Normalizza il token a uppercase per il confronto
                 const normalizedToken = data.token.toUpperCase();
-                const existing = Object.values(state.participants).find(p => p.token === normalizedToken);
+                const existing = getParticipantByToken(normalizedToken);
+                const providedSessionSecret = data.sessionSecret || null;
                 
-                if (existing && existing.id !== socketId) {
-                    console.error('[GameEvents] Token already in use:', normalizedToken, 'by:', existing.id);
-                    return res.status(400).json({ error: 'TOKEN ALREADY IN USE' });
-                }
-                
-                // Se il partecipante esiste già con lo stesso socketId, permettere il rejoin
-                if (existing && existing.id === socketId) {
-                    console.log('[GameEvents] Participant reconnecting with same socketId');
-                    // Aggiorna solo il nome se è cambiato
-                    if (data.name && data.name !== existing.name) {
-                        newState = updateParticipant(socketId, { name: data.name });
-                    } else {
-                        newState = state;
+                // Se il token esiste già, verifica il sessionSecret per permettere il rejoin
+                if (existing) {
+                    try {
+                        // addParticipant verificherà il sessionSecret
+                        console.log(`[GameEvents] Token ${normalizedToken} already exists, attempting rejoin with sessionSecret: ${providedSessionSecret ? 'provided' : 'missing'}`);
+                        
+                        // Mantieni i dati esistenti (prompt, image, votes) durante il rejoin
+                        newState = addParticipant(socketId, {
+                            id: normalizedToken, // id è il token
+                            token: normalizedToken,
+                            name: data.name || existing.name,
+                            prompt: existing.prompt || '',
+                            image: existing.image || null,
+                            votes: existing.votes || 0,
+                            color: existing.color,
+                            socketId: socketId
+                        }, providedSessionSecret);
+                        
+                        sendAdminLog(`🔄 ${existing.name} si è riconnesso (token: ${normalizedToken})`, 'info');
+                        shouldBroadcastState = true;
+                        broadcastEvent('participant:joined', { 
+                            id: normalizedToken, 
+                            token: normalizedToken,
+                            name: newState.participants[normalizedToken].name, 
+                            color: newState.participants[normalizedToken].color,
+                            sessionSecret: newState.participants[normalizedToken].sessionSecret // Invia il sessionSecret al client
+                        });
+                        break;
+                    } catch (error) {
+                        if (error.message === 'INVALID_SESSION_SECRET' || error.message === 'SESSION_SECRET_REQUIRED') {
+                            console.error(`[GameEvents] Rejoin rejected for token ${normalizedToken}: ${error.message}`);
+                            sendAdminLog(`⚠️ Tentativo di rejoin non autorizzato per token ${normalizedToken}`, 'warning');
+                            return res.status(403).json({ 
+                                error: 'UNAUTHORIZED_REJOIN',
+                                message: 'Token già in uso. Non puoi riconnetterti senza la sessione originale.'
+                            });
+                        }
+                        throw error; // Rilancia altri errori
                     }
-                    shouldBroadcastState = true;
-                    broadcastEvent('participant:joined', { id: socketId, name: newState.participants[socketId].name, color: newState.participants[socketId].color });
-                    break;
                 }
                 
+                // Nuovo partecipante
                 const palette = ['#BEFA4F', '#E83399', '#5AA7B9', '#F5B700'];
                 const participantIndex = Object.keys(state.participants).length;
                 const assignedColor = palette[participantIndex % palette.length];
                 
-                console.log('[GameEvents] Adding participant:', { socketId, token: normalizedToken, name: data.name, index: participantIndex });
+                console.log('[GameEvents] Adding new participant:', { socketId, token: normalizedToken, name: data.name, index: participantIndex });
                 
                 newState = addParticipant(socketId, {
-                    id: socketId,
+                    id: normalizedToken, // id è il token
                     token: normalizedToken,
                     name: data.name || `Player ${participantIndex + 1}`,
                     prompt: '',
                     image: null,
                     votes: 0,
-                    color: assignedColor
+                    color: assignedColor,
+                    socketId: socketId
                 });
                 
                 console.log('[GameEvents] Participant added. New participants count:', Object.keys(newState.participants).length);
+                sendAdminLog(`✅ ${data.name || `Player ${participantIndex + 1}`} si è unito (token: ${normalizedToken})`, 'success');
                 
                 // Check if all expected participants joined
                 if (Object.keys(newState.participants).length === newState.expectedParticipantCount && newState.status === 'WAITING_FOR_PLAYERS') {
@@ -265,77 +293,114 @@ export default async function handler(req, res) {
                     // Forza broadcast immediato dello stato aggiornato
                     broadcastEvent('state:update', newState);
                 }
-                // Emit both events
-                broadcastEvent('participant:joined', { id: socketId, name: newState.participants[socketId].name, color: assignedColor });
+                // Emit both events - include sessionSecret per il nuovo partecipante
+                broadcastEvent('participant:joined', { 
+                    id: normalizedToken, 
+                    token: normalizedToken,
+                    name: newState.participants[normalizedToken].name, 
+                    color: assignedColor,
+                    sessionSecret: newState.participants[normalizedToken].sessionSecret // Invia il sessionSecret al client
+                });
                 shouldBroadcastState = true;
                 break;
 
             case 'participant:update_prompt':
-                if (state.participants[socketId] && state.status === 'WRITING') {
-                    // Il data potrebbe essere direttamente il prompt (stringa) o un oggetto con {prompt: ...}
-                    let promptValue;
-                    if (typeof data === 'string') {
-                        promptValue = data;
-                    } else if (data && typeof data === 'object') {
-                        // Se data è un oggetto, estrai la stringa
-                        if (typeof data.prompt === 'string') {
-                            promptValue = data.prompt;
-                        } else if (data.prompt && typeof data.prompt === 'object' && typeof data.prompt.prompt === 'string') {
-                            // Gestisce doppio annidamento
-                            promptValue = data.prompt.prompt;
-                        } else {
-                            promptValue = '';
-                        }
+                // Ottieni il token dal socketId
+                const token = getTokenBySocketId(socketId);
+                if (!token) {
+                    console.warn(`[GameEvents] Cannot update prompt: socketId ${socketId} not found in token mapping`);
+                    return res.status(400).json({ error: 'PARTICIPANT_NOT_FOUND' });
+                }
+                
+                const participant = getParticipantByToken(token);
+                if (!participant || state.status !== 'WRITING') {
+                    console.warn(`[GameEvents] Cannot update prompt: participant not found or status is not WRITING (status: ${state.status})`);
+                    return res.status(400).json({ error: 'INVALID_STATE' });
+                }
+                
+                // Il data potrebbe essere direttamente il prompt (stringa) o un oggetto con {prompt: ...}
+                let promptValue;
+                if (typeof data === 'string') {
+                    promptValue = data;
+                } else if (data && typeof data === 'object') {
+                    // Se data è un oggetto, estrai la stringa
+                    if (typeof data.prompt === 'string') {
+                        promptValue = data.prompt;
+                    } else if (data.prompt && typeof data.prompt === 'object' && typeof data.prompt.prompt === 'string') {
+                        // Gestisce doppio annidamento
+                        promptValue = data.prompt.prompt;
                     } else {
                         promptValue = '';
                     }
-                    
-                    // Assicurati che promptValue sia sempre una stringa
-                    promptValue = String(promptValue || '');
-                    
-                    console.log('[GameEvents] participant:update_prompt received:', { socketId, promptType: typeof data, promptLength: promptValue.length, promptPreview: promptValue.substring(0, 50) });
-                    
-                    newState = updateParticipant(socketId, { prompt: promptValue });
-                    // Emit prompt update to screen room - assicurati che il prompt sia sempre incluso come stringa
-                    const promptUpdateData = {
-                        id: socketId,
-                        prompt: promptValue  // Sempre una stringa
-                    };
-                    console.log('[GameEvents] Broadcasting prompt:update:', promptUpdateData);
-                    broadcastEvent('prompt:update', promptUpdateData);
-                    
-                    // Emetti sempre state:update con debounce di 200ms per sincronizzazione in tempo reale
-                    // Questo è necessario per Vercel serverless dove il broadcast diretto potrebbe non funzionare tra istanze
-                    const now = Date.now();
-                    const lastBroadcast = gameState._lastPromptBroadcast || 0;
-                    const timeSinceLastBroadcast = now - lastBroadcast;
-                    
-                    if (timeSinceLastBroadcast > 200) {
-                        // Broadcast immediato
-                        shouldBroadcastState = true;
-                        gameState._lastPromptBroadcast = now;
-                        newState._lastPromptBroadcast = now;
-                    } else {
-                        // Programma un broadcast dopo il debounce
-                        const delay = 200 - timeSinceLastBroadcast;
-                        if (gameState._pendingPromptBroadcast) {
-                            clearTimeout(gameState._pendingPromptBroadcast);
-                        }
-                        gameState._pendingPromptBroadcast = setTimeout(() => {
-                            const currentState = getGameState();
-                            broadcastEvent('state:update', currentState);
-                            gameState._lastPromptBroadcast = Date.now();
-                            gameState._pendingPromptBroadcast = null;
-                        }, delay);
+                } else {
+                    promptValue = '';
+                }
+                
+                // Assicurati che promptValue sia sempre una stringa
+                promptValue = String(promptValue || '');
+                
+                console.log('[GameEvents] participant:update_prompt received:', { token, socketId, promptType: typeof data, promptLength: promptValue.length, promptPreview: promptValue.substring(0, 50) });
+                
+                newState = updateParticipant(token, { prompt: promptValue });
+                // Emit prompt update to screen room - usa token come id
+                const promptUpdateData = {
+                    id: token, // Usa token invece di socketId
+                    token: token,
+                    prompt: promptValue  // Sempre una stringa
+                };
+                console.log('[GameEvents] Broadcasting prompt:update:', promptUpdateData);
+                broadcastEvent('prompt:update', promptUpdateData);
+                
+                // Emetti sempre state:update con debounce di 200ms per sincronizzazione in tempo reale
+                // Questo è necessario per Vercel serverless dove il broadcast diretto potrebbe non funzionare tra istanze
+                const now = Date.now();
+                const lastBroadcast = gameState._lastPromptBroadcast || 0;
+                const timeSinceLastBroadcast = now - lastBroadcast;
+                
+                if (timeSinceLastBroadcast > 200) {
+                    // Broadcast immediato
+                    shouldBroadcastState = true;
+                    gameState._lastPromptBroadcast = now;
+                    newState._lastPromptBroadcast = now;
+                } else {
+                    // Programma un broadcast dopo il debounce
+                    const delay = 200 - timeSinceLastBroadcast;
+                    if (gameState._pendingPromptBroadcast) {
+                        clearTimeout(gameState._pendingPromptBroadcast);
                     }
+                    gameState._pendingPromptBroadcast = setTimeout(() => {
+                        const currentState = getGameState();
+                        broadcastEvent('state:update', currentState);
+                        gameState._lastPromptBroadcast = Date.now();
+                        gameState._pendingPromptBroadcast = null;
+                    }, delay);
                 }
                 break;
 
             case 'vote:cast':
-                if (state.status === 'VOTING' && state.participants[data.participantId]) {
-                    const participant = state.participants[data.participantId];
-                    newState = updateParticipant(data.participantId, { votes: participant.votes + 1 });
+                // data.participantId può essere un token o un socketId
+                // Prova prima come token, poi come socketId
+                let votedParticipant = null;
+                let votedToken = null;
+                
+                if (state.participants[data.participantId]) {
+                    // È un token
+                    votedParticipant = state.participants[data.participantId];
+                    votedToken = data.participantId;
+                } else {
+                    // Prova come socketId
+                    votedToken = getTokenBySocketId(data.participantId);
+                    if (votedToken) {
+                        votedParticipant = getParticipantByToken(votedToken);
+                    }
+                }
+                
+                if (state.status === 'VOTING' && votedParticipant && votedToken) {
+                    newState = updateParticipant(votedToken, { votes: (votedParticipant.votes || 0) + 1 });
                     shouldBroadcastState = true;
+                    console.log(`[GameEvents] Vote cast for ${votedParticipant.name} (token: ${votedToken}), new votes: ${newState.participants[votedToken].votes}`);
+                } else {
+                    console.warn(`[GameEvents] Cannot cast vote: participant not found or invalid state (status: ${state.status})`);
                 }
                 break;
 

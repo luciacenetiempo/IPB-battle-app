@@ -16,12 +16,36 @@ export default function Participant() {
         socket.on('state:update', (state) => {
             console.log('[Participant] State update received:', state.status, 'Timer:', state.timer, 'VotingTimer:', state.votingTimer, 'Participants:', Object.keys(state.participants || {}).length);
             setGameState(state);
-            // If the server has a prompt for us (e.g. reconnect), update it
-            // Be careful not to overwrite local changes if typing fast, 
-            // but for simplicity/safety on reconnect, we sync.
-            if (state.participants && state.participants[socket.id]) {
-                // Only update if significantly different or empty to avoid cursor jumps?
-                // For now, let's rely on local state for typing and only sync on initial load/reconnect
+            
+            // Se un nuovo round è iniziato, pulisci i sessionSecret vecchi dal localStorage
+            if (state.status === 'WAITING_FOR_PLAYERS' && state.round > 0) {
+                // Pulisci tutti i sessionSecret vecchi (i nuovi verranno generati quando i partecipanti si connettono)
+                Object.keys(localStorage).forEach(key => {
+                    if (key.startsWith('participant_session_')) {
+                        localStorage.removeItem(key);
+                        console.log('[Participant] Removed old sessionSecret:', key);
+                    }
+                });
+            }
+            
+            // Se abbiamo un token salvato e non siamo ancora connessi, prova a riconnetterti automaticamente
+            if (!joined && token && state.status !== 'IDLE' && state.validTokens && state.validTokens.includes(token.toUpperCase())) {
+                const savedSessionSecret = localStorage.getItem(`participant_session_${token.toUpperCase()}`);
+                console.log('[Participant] Auto-rejoining with saved token:', token, 'sessionSecret:', savedSessionSecret ? 'present' : 'missing');
+                socket.emit('participant:join', { 
+                    token: token.toUpperCase(), 
+                    name: name || localStorage.getItem('participant_name') || '',
+                    sessionSecret: savedSessionSecret // Invia il sessionSecret per autenticare il rejoin
+                });
+            }
+            
+            // Sincronizza il prompt dal server se disponibile (per rejoin)
+            if (token && state.participants && state.participants[token.toUpperCase()]) {
+                const serverParticipant = state.participants[token.toUpperCase()];
+                if (serverParticipant.prompt && !prompt) {
+                    // Solo se il prompt locale è vuoto, sincronizza dal server
+                    setPrompt(serverParticipant.prompt);
+                }
             }
         });
 
@@ -41,25 +65,57 @@ export default function Participant() {
         };
     }, [socket]);
 
-    const [token, setToken] = useState('');
+    const [token, setToken] = useState(() => {
+        // Carica token salvato dal localStorage all'avvio
+        if (typeof window !== 'undefined') {
+            return localStorage.getItem('participant_token') || '';
+        }
+        return '';
+    });
     const [error, setError] = useState('');
+    
+    // Carica nome salvato dal localStorage all'avvio
+    useEffect(() => {
+        if (typeof window !== 'undefined') {
+            const savedName = localStorage.getItem('participant_name');
+            if (savedName && !name) {
+                setName(savedName);
+            }
+        }
+    }, []);
 
     useEffect(() => {
         socket.on('participant:joined', (data) => {
             setJoined(true);
             setError('');
+            // Salva token, nome e sessionSecret nel localStorage per permettere rejoin automatico sicuro
+            if (token) {
+                localStorage.setItem('participant_token', token);
+                localStorage.setItem('participant_name', name);
+                // Salva il sessionSecret se fornito (per proteggere il rejoin)
+                if (data.sessionSecret) {
+                    localStorage.setItem(`participant_session_${token.toUpperCase()}`, data.sessionSecret);
+                    console.log('[Participant] SessionSecret salvato per rejoin sicuro');
+                }
+            }
         });
 
         socket.on('error:join', (msg) => {
             setError(msg);
             setJoined(false);
+            // Rimuovi token e sessionSecret salvati se c'è un errore
+            if (token) {
+                localStorage.removeItem('participant_token');
+                localStorage.removeItem('participant_name');
+                localStorage.removeItem(`participant_session_${token.toUpperCase()}`);
+            }
         });
 
         return () => {
             socket.off('participant:joined');
             socket.off('error:join');
         };
-    }, []);
+    }, [token, name]);
 
     // Reset vote selection when voting starts
     useEffect(() => {
@@ -94,8 +150,14 @@ export default function Participant() {
         e.preventDefault();
         if (token.trim() && name.trim()) {
             const normalizedToken = token.trim().toUpperCase();
-            console.log('[Participant] Attempting to join with token:', normalizedToken, 'name:', name.trim());
-            socket.emit('participant:join', { token: normalizedToken, name: name.trim() });
+            // Controlla se abbiamo un sessionSecret salvato (per rejoin)
+            const savedSessionSecret = localStorage.getItem(`participant_session_${normalizedToken}`);
+            console.log('[Participant] Attempting to join with token:', normalizedToken, 'name:', name.trim(), 'sessionSecret:', savedSessionSecret ? 'present' : 'new');
+            socket.emit('participant:join', { 
+                token: normalizedToken, 
+                name: name.trim(),
+                sessionSecret: savedSessionSecret // Invia il sessionSecret se disponibile (per rejoin sicuro)
+            });
         } else {
             console.warn('[Participant] Cannot join: token or name missing');
         }
@@ -108,14 +170,15 @@ export default function Participant() {
         socket.emit('participant:update_prompt', { prompt: newPrompt });
     };
 
-    const handleVote = (participantId) => {
+    const handleVote = (participantToken) => {
         if (hasVoted || gameState?.status !== 'VOTING') return;
-        setSelectedVote(participantId);
+        setSelectedVote(participantToken);
     };
 
     const confirmVote = () => {
         if (selectedVote && !hasVoted && gameState?.status === 'VOTING') {
-            console.log('[Participant] Casting vote for:', selectedVote);
+            console.log('[Participant] Casting vote for token:', selectedVote);
+            // Invia il token del partecipante votato
             socket.emit('vote:cast', { participantId: selectedVote });
             setHasVoted(true);
             // Persist vote to avoid refresh-spam
@@ -160,8 +223,9 @@ export default function Participant() {
 
     if (!gameState) return <div className={styles.container}>Loading System...</div>;
 
-    // Verifica che il partecipante sia registrato nello stato
-    const myParticipant = gameState.participants?.[socket.id];
+    // Verifica che il partecipante sia registrato nello stato usando il token
+    const normalizedToken = token ? token.toUpperCase() : null;
+    const myParticipant = normalizedToken ? gameState.participants?.[normalizedToken] : null;
     const isWriting = gameState.status === 'WRITING' && myParticipant;
     const isVoting = gameState.status === 'VOTING';
     const myColor = myParticipant?.color || '#B6FF6C';
@@ -172,6 +236,7 @@ export default function Participant() {
         isWriting,
         isVoting,
         hasParticipant: !!myParticipant,
+        token: normalizedToken,
         timer: gameState.timer,
         votingTimer: gameState.votingTimer,
         participantsCount: Object.keys(gameState.participants || {}).length
@@ -192,14 +257,17 @@ export default function Participant() {
                 </div>
 
                 <div className={styles.votingGrid}>
-                    {participants.map((p) => (
+                    {participants.map((p) => {
+                        // p.id è ora il token
+                        const participantToken = p.id || p.token;
+                        return (
                         <div
-                            key={p.id}
-                            className={`${styles.votingCard} ${selectedVote === p.id ? styles.votingCardSelected : ''} ${hasVoted ? styles.votingCardDisabled : ''}`}
-                            onClick={() => !hasVoted && handleVote(p.id)}
+                            key={participantToken}
+                            className={`${styles.votingCard} ${selectedVote === participantToken ? styles.votingCardSelected : ''} ${hasVoted ? styles.votingCardDisabled : ''}`}
+                            onClick={() => !hasVoted && handleVote(participantToken)}
                             style={{
-                                borderColor: selectedVote === p.id ? p.color : '#333',
-                                boxShadow: selectedVote === p.id ? `0 0 20px ${p.color}` : 'none'
+                                borderColor: selectedVote === participantToken ? p.color : '#333',
+                                boxShadow: selectedVote === participantToken ? `0 0 20px ${p.color}` : 'none'
                             }}
                         >
                             {p.image ? (
@@ -216,13 +284,14 @@ export default function Participant() {
                             <div className={styles.votingCardName} style={{ color: p.color }}>
                                 {p.name}
                             </div>
-                            {selectedVote === p.id && (
+                            {selectedVote === participantToken && (
                                 <div className={styles.votingCardCheckmark} style={{ color: p.color }}>
                                     ✓
                                 </div>
                             )}
                         </div>
-                    ))}
+                        );
+                    })}
                 </div>
 
                 {hasVoted ? (
