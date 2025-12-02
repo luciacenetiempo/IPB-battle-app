@@ -7,12 +7,14 @@ export default function Participant() {
     const [name, setName] = useState('');
     const [prompt, setPrompt] = useState('');
     const [gameState, setGameState] = useState(null);
+    const [selectedVote, setSelectedVote] = useState(null);
+    const [hasVoted, setHasVoted] = useState(false);
     const socket = getSocket();
     const textareaRef = useRef(null);
 
     useEffect(() => {
         socket.on('state:update', (state) => {
-            console.log('[Participant] State update received:', state.status, 'Timer:', state.timer, 'Participants:', Object.keys(state.participants || {}).length);
+            console.log('[Participant] State update received:', state.status, 'Timer:', state.timer, 'VotingTimer:', state.votingTimer, 'Participants:', Object.keys(state.participants || {}).length);
             setGameState(state);
             // If the server has a prompt for us (e.g. reconnect), update it
             // Be careful not to overwrite local changes if typing fast, 
@@ -59,6 +61,35 @@ export default function Participant() {
         };
     }, []);
 
+    // Reset vote selection when voting starts
+    useEffect(() => {
+        if (gameState?.status === 'VOTING') {
+            // Reset vote when entering voting phase
+            const previousStatus = gameState.previousStatus;
+            if (previousStatus !== 'VOTING') {
+                setSelectedVote(null);
+                setHasVoted(false);
+            }
+        }
+    }, [gameState?.status]);
+
+    // Check local storage on load/round change
+    useEffect(() => {
+        if (gameState) {
+            const votedId = localStorage.getItem(`voted_round_${gameState.round}`);
+            if (votedId) {
+                setHasVoted(true);
+                setSelectedVote(votedId);
+            } else {
+                // Reset if no vote found for this round and not in voting
+                if (gameState.status !== 'VOTING') {
+                    setHasVoted(false);
+                    setSelectedVote(null);
+                }
+            }
+        }
+    }, [gameState?.round]);
+
     const handleJoin = (e) => {
         e.preventDefault();
         if (token.trim() && name.trim()) {
@@ -75,6 +106,21 @@ export default function Participant() {
         setPrompt(newPrompt);
         // Invia il prompt come oggetto per compatibilità con il server
         socket.emit('participant:update_prompt', { prompt: newPrompt });
+    };
+
+    const handleVote = (participantId) => {
+        if (hasVoted || gameState?.status !== 'VOTING') return;
+        setSelectedVote(participantId);
+    };
+
+    const confirmVote = () => {
+        if (selectedVote && !hasVoted && gameState?.status === 'VOTING') {
+            console.log('[Participant] Casting vote for:', selectedVote);
+            socket.emit('vote:cast', { participantId: selectedVote });
+            setHasVoted(true);
+            // Persist vote to avoid refresh-spam
+            localStorage.setItem(`voted_round_${gameState.round}`, selectedVote);
+        }
     };
 
     if (!joined) {
@@ -117,17 +163,87 @@ export default function Participant() {
     // Verifica che il partecipante sia registrato nello stato
     const myParticipant = gameState.participants?.[socket.id];
     const isWriting = gameState.status === 'WRITING' && myParticipant;
+    const isVoting = gameState.status === 'VOTING';
     const myColor = myParticipant?.color || '#B6FF6C';
     
     // Debug log
     console.log('[Participant] Render:', {
         status: gameState.status,
         isWriting,
+        isVoting,
         hasParticipant: !!myParticipant,
         timer: gameState.timer,
+        votingTimer: gameState.votingTimer,
         participantsCount: Object.keys(gameState.participants || {}).length
     });
 
+    // VOTING MODE: Show images and allow voting
+    if (isVoting) {
+        const participants = Object.values(gameState.participants || {});
+        const votingTimer = gameState.votingTimer || 0;
+
+        return (
+            <div className={styles.votingContainer}>
+                <div className={styles.votingHeader}>
+                    <div className={styles.votingTimer}>
+                        {votingTimer}
+                    </div>
+                    <h1 className={styles.votingTitle}>VOTE NOW</h1>
+                </div>
+
+                <div className={styles.votingGrid}>
+                    {participants.map((p) => (
+                        <div
+                            key={p.id}
+                            className={`${styles.votingCard} ${selectedVote === p.id ? styles.votingCardSelected : ''} ${hasVoted ? styles.votingCardDisabled : ''}`}
+                            onClick={() => !hasVoted && handleVote(p.id)}
+                            style={{
+                                borderColor: selectedVote === p.id ? p.color : '#333',
+                                boxShadow: selectedVote === p.id ? `0 0 20px ${p.color}` : 'none'
+                            }}
+                        >
+                            {p.image ? (
+                                <img 
+                                    src={p.image} 
+                                    alt={`Generated image for ${p.name}`}
+                                    className={styles.votingImage}
+                                />
+                            ) : (
+                                <div className={styles.votingImagePlaceholder} style={{ backgroundColor: p.color + '22' }}>
+                                    <div className={styles.votingImagePlaceholderText}>NO IMAGE</div>
+                                </div>
+                            )}
+                            <div className={styles.votingCardName} style={{ color: p.color }}>
+                                {p.name}
+                            </div>
+                            {selectedVote === p.id && (
+                                <div className={styles.votingCardCheckmark} style={{ color: p.color }}>
+                                    ✓
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </div>
+
+                {hasVoted ? (
+                    <div className={styles.votingConfirmed}>
+                        <h2>VOTE RECORDED</h2>
+                        <p>Thank you for participating</p>
+                    </div>
+                ) : (
+                    <button
+                        className={styles.votingButton}
+                        disabled={!selectedVote}
+                        onClick={confirmVote}
+                    >
+                        CONFIRM VOTE
+                    </button>
+                )}
+            </div>
+        );
+    }
+
+    // WRITING MODE: Show textarea
     return (
         <div className={styles.container} style={{ backgroundColor: myColor, color: 'black' }}>
             <div className={styles.header}>

@@ -1,68 +1,120 @@
 .container {
-    padding: 1rem;
+    padding: 0.75rem;
     background: #000;
-    min-height: 100vh;
+    height: 100vh;
+    height: 100dvh; /* Dynamic viewport height for mobile */
     display: flex;
     flex-direction: column;
     align-items: center;
     text-align: center;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+.header {
+    flex-shrink: 0;
+    margin-bottom: 0.5rem;
+}
+
+.title {
+    font-size: 1.5rem;
+    margin: 0.5rem 0;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    font-weight: bold;
 }
 
 .grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1rem;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.75rem;
     width: 100%;
-    margin: 2rem 0;
+    flex: 1;
+    min-height: 0;
+    margin: 0.5rem 0;
+    overflow: hidden;
 }
 
 .card {
     background: #111;
-    border: 2px solid #333;
+    border: 3px solid #333;
     padding: 0.5rem;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.3s;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+    border-radius: 8px;
+    position: relative;
 }
 
 .card.selected {
-    border-color: var(--accent-color);
-    background: #220022;
+    transform: scale(1.05);
+}
+
+.card:hover:not(.selected) {
+    transform: scale(1.02);
+    border-color: #555;
 }
 
 .imagePlaceholder {
-    aspect-ratio: 1;
+    flex: 1;
     background: #222;
     display: flex;
     justify-content: center;
     align-items: center;
     margin-bottom: 0.5rem;
     color: #666;
+    min-height: 0;
+    border-radius: 4px;
+    position: relative;
+}
+
+.imagePlaceholderText {
+    font-size: 1.2rem;
+    text-transform: uppercase;
+    font-weight: bold;
+}
+
+.image {
+    width: 100%;
+    flex: 1;
+    object-fit: contain;
+    background: #000;
+    margin-bottom: 0.5rem;
+    display: block;
+    min-height: 0;
 }
 
 .name {
     font-weight: bold;
-    font-size: 0.9rem;
+    font-size: 1rem;
+    padding: 0.5rem;
+    text-align: center;
+    background: rgba(0, 0, 0, 0.5);
+    flex-shrink: 0;
 }
 
 .voteButton {
     background: var(--color-cyan);
     color: #000;
     border: none;
-    padding: 1.5rem 2rem;
+    padding: 1rem 1.5rem;
     font-size: 1.2rem;
     font-weight: bold;
     width: 100%;
-    max-width: 300px;
-    margin-top: auto;
-    margin-bottom: 2rem;
+    max-width: 400px;
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
     border-radius: 9999px;
-    /* Pill */
     box-shadow: 0 0 20px rgba(77, 235, 255, 0.4);
     cursor: pointer;
     text-transform: uppercase;
     letter-spacing: 2px;
     font-family: inherit;
     transition: all 0.2s;
+    flex-shrink: 0;
 }
 
 .voteButton:hover:not(:disabled) {
@@ -75,4 +127,29 @@
     color: #555;
     cursor: not-allowed;
     box-shadow: none;
+}
+
+.checkmark {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    font-size: 2.5rem;
+    font-weight: bold;
+    background: rgba(0, 0, 0, 0.7);
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        transform: scale(1);
+    }
+    50% {
+        transform: scale(1.1);
+    }
 }

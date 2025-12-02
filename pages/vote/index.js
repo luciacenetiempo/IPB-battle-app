@@ -63,21 +63,39 @@ export default function Vote() {
 
     return (
         <div className={styles.container}>
-            <Logo size="small" />
-            <h1>VOTE NOW</h1>
+            <div className={styles.header}>
+                <Logo size="small" />
+                <h1 className={styles.title}>VOTE NOW</h1>
+            </div>
             <div className={styles.grid}>
                 {Object.values(gameState.participants).map((p) => (
                     <div
                         key={p.id}
                         className={`${styles.card} ${selectedId === p.id ? styles.selected : ''}`}
                         onClick={() => handleVote(p.id)}
-                        style={{ borderColor: p.color, boxShadow: selectedId === p.id ? `0 0 15px ${p.color}` : 'none' }}
+                        style={{ 
+                            borderColor: selectedId === p.id ? p.color : '#333', 
+                            boxShadow: selectedId === p.id ? `0 0 20px ${p.color}` : 'none',
+                            borderWidth: selectedId === p.id ? '4px' : '3px'
+                        }}
                     >
-                        {/* Placeholder for image */}
-                        <div className={styles.imagePlaceholder} style={{ backgroundColor: p.color + '22' }}>
-                            IMAGE {p.name}
-                        </div>
+                        {p.image ? (
+                            <img 
+                                src={p.image} 
+                                alt={`Generated image for ${p.name}`}
+                                className={styles.image}
+                            />
+                        ) : (
+                            <div className={styles.imagePlaceholder} style={{ backgroundColor: p.color + '22' }}>
+                                <div className={styles.imagePlaceholderText}>NO IMAGE</div>
+                            </div>
+                        )}
                         <div className={styles.name} style={{ color: p.color }}>{p.name}</div>
+                        {selectedId === p.id && (
+                            <div className={styles.checkmark} style={{ color: p.color }}>
+                                ✓
+                            </div>
+                        )}
                     </div>
                 ))}
             </div>
