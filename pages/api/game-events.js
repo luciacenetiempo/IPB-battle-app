@@ -15,16 +15,41 @@ function sendAdminLog(msg, type = 'info') {
 
 // Funzione per triggerare la generazione (non bloccante)
 async function triggerGeneration(state) {
+    console.log('[GameEvents] triggerGeneration called with state:', {
+        status: state.status,
+        participantsCount: Object.keys(state.participants || {}).length,
+        participants: Object.keys(state.participants || {})
+    });
+    
     const Replicate = require('replicate');
     const replicate = new Replicate({
         auth: process.env.REPLICATE_API_TOKEN,
     });
 
-    const participants = Object.values(state.participants);
-    const participantsWithPrompts = participants.filter(p => p.prompt && p.prompt.trim() !== '');
+    const participants = Object.values(state.participants || {});
+    console.log('[GameEvents] All participants:', participants.map(p => ({
+        id: p.id,
+        token: p.token,
+        name: p.name,
+        promptType: typeof p.prompt,
+        promptLength: typeof p.prompt === 'string' ? p.prompt.length : 0,
+        hasPrompt: !!p.prompt
+    })));
+    
+    // Normalizza i prompt a stringhe prima di filtrare
+    const participantsWithPrompts = participants.filter(p => {
+        if (!p.prompt) return false;
+        const promptStr = String(p.prompt || '').trim();
+        const hasValidPrompt = promptStr !== '';
+        console.log(`[GameEvents] Participant ${p.name} (${p.id}): prompt type=${typeof p.prompt}, length=${promptStr.length}, valid=${hasValidPrompt}`);
+        return hasValidPrompt;
+    });
+    
+    console.log(`[GameEvents] Found ${participantsWithPrompts.length} participants with valid prompts`);
     
     if (participantsWithPrompts.length === 0) {
         sendAdminLog('⚠️ Nessun prompt disponibile per la generazione', 'warning');
+        console.log('[GameEvents] No participants with prompts, aborting generation');
         return;
     }
 
@@ -32,13 +57,16 @@ async function triggerGeneration(state) {
     
     for (const p of participantsWithPrompts) {
         try {
-            sendAdminLog(`📝 Inizio generazione per ${p.name}: "${p.prompt.substring(0, 50)}${p.prompt.length > 50 ? '...' : ''}"`, 'info');
+            // Assicurati che il prompt sia sempre una stringa
+            const promptStr = String(p.prompt || '').trim();
+            console.log(`[GameEvents] Generating for ${p.name} (${p.id}), prompt length: ${promptStr.length}`);
+            sendAdminLog(`📝 Inizio generazione per ${p.name}: "${promptStr.substring(0, 50)}${promptStr.length > 50 ? '...' : ''}"`, 'info');
             
             const startTime = Date.now();
             let prediction = await replicate.predictions.create({
                 model: "black-forest-labs/flux-2-dev",
                 input: {
-                    prompt: p.prompt.trim(),
+                    prompt: promptStr,
                     aspect_ratio: '1:1',
                     output_format: 'webp',
                     output_quality: 90
@@ -64,7 +92,11 @@ async function triggerGeneration(state) {
                 const { updateParticipant } = require('../../lib/game-state');
                 const imageUrl = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output;
                 // p.id è ora il token
+                console.log(`[GameEvents] Updating participant ${p.id} (${p.name}) with image URL:`, imageUrl);
                 updateParticipant(p.id, { image: imageUrl });
+                // Broadcast lo stato aggiornato dopo ogni immagine generata
+                const updatedState = require('../../lib/game-state').getGameState();
+                broadcastEvent('state:update', updatedState);
                 sendAdminLog(`✅ Immagine generata con successo per ${p.name} (${duration}s)`, 'success');
             } else {
                 sendAdminLog(`❌ Generazione fallita per ${p.name}: ${prediction.status}`, 'error');
@@ -72,19 +104,37 @@ async function triggerGeneration(state) {
         } catch (error) {
             sendAdminLog(`❌ Errore durante la generazione per ${p.name}: ${error.message}`, 'error');
             console.error(`[GameEvents] Error generating for ${p.name}:`, error);
+            if (error.stack) {
+                console.error(`[GameEvents] Error stack:`, error.stack);
+            }
         }
     }
     
+    // Broadcast finale dello stato aggiornato
+    const finalState = require('../../lib/game-state').getGameState();
+    broadcastEvent('state:update', finalState);
     sendAdminLog(`✨ Generazione completata per tutti i partecipanti`, 'success');
+    console.log('[GameEvents] Generation completed, final state broadcasted');
 }
 
 // Configura il callback per triggerare la generazione quando il timer arriva a 0
 setOnTimerZeroCallback(async (state) => {
     console.log('[GameEvents] Timer reached zero callback called, triggering generation automatically');
+    console.log('[GameEvents] State passed to callback:', {
+        status: state.status,
+        participantsCount: Object.keys(state.participants || {}).length
+    });
     sendAdminLog('⏰ Timer scaduto! Avvio generazione automatica (via callback)...', 'info');
-    await triggerGeneration(state);
-    // Broadcast lo stato aggiornato
-    broadcastEvent('state:update', getGameState());
+    // Usa lo stato corrente invece di quello passato per assicurarsi di avere i dati più recenti
+    const currentState = getGameState();
+    console.log('[GameEvents] Using current state for generation:', {
+        status: currentState.status,
+        participantsCount: Object.keys(currentState.participants || {}).length
+    });
+    await triggerGeneration(currentState);
+    // Broadcast lo stato aggiornato (triggerGeneration già fa il broadcast, ma lo facciamo anche qui per sicurezza)
+    const finalState = getGameState();
+    broadcastEvent('state:update', finalState);
 });
 
 console.log('[GameEvents] onTimerZeroCallback configured');
@@ -339,17 +389,24 @@ export default async function handler(req, res) {
                 // Assicurati che promptValue sia sempre una stringa
                 promptValue = String(promptValue || '');
                 
-                console.log('[GameEvents] participant:update_prompt received:', { token, socketId, promptType: typeof data, promptLength: promptValue.length, promptPreview: promptValue.substring(0, 50) });
-                
-                newState = updateParticipant(token, { prompt: promptValue });
-                // Emit prompt update to screen room - usa token come id
-                const promptUpdateData = {
-                    id: token, // Usa token invece di socketId
-                    token: token,
-                    prompt: promptValue  // Sempre una stringa
-                };
-                console.log('[GameEvents] Broadcasting prompt:update:', promptUpdateData);
-                broadcastEvent('prompt:update', promptUpdateData);
+                    console.log('[GameEvents] participant:update_prompt received:', { token, socketId, promptType: typeof data, promptLength: promptValue.length, promptPreview: promptValue.substring(0, 50) });
+                    
+                    newState = updateParticipant(token, { prompt: promptValue });
+                    console.log('[GameEvents] Participant updated. Verifying prompt was saved:', {
+                        token,
+                        savedPrompt: newState.participants[token]?.prompt,
+                        savedPromptType: typeof newState.participants[token]?.prompt,
+                        savedPromptLength: typeof newState.participants[token]?.prompt === 'string' ? newState.participants[token].prompt.length : 0
+                    });
+                    
+                    // Emit prompt update to screen room - usa token come id
+                    const promptUpdateData = {
+                        id: token, // Usa token invece di socketId
+                        token: token,
+                        prompt: promptValue  // Sempre una stringa
+                    };
+                    console.log('[GameEvents] Broadcasting prompt:update:', promptUpdateData);
+                    broadcastEvent('prompt:update', promptUpdateData);
                 
                 // Emetti sempre state:update con debounce di 200ms per sincronizzazione in tempo reale
                 // Questo è necessario per Vercel serverless dove il broadcast diretto potrebbe non funzionare tra istanze

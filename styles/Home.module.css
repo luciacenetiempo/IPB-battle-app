@@ -1,0 +1,337 @@
+.container {
+    min-height: 100vh;
+    background: linear-gradient(135deg, #000 0%, #0a0a0a 50%, #000 100%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    position: relative;
+    overflow: hidden;
+}
+
+/* Animated background grid */
+.container::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: 
+        linear-gradient(rgba(190, 250, 79, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(190, 250, 79, 0.03) 1px, transparent 1px);
+    background-size: 50px 50px;
+    animation: gridMove 20s linear infinite;
+    pointer-events: none;
+}
+
+@keyframes gridMove {
+    0% {
+        transform: translate(0, 0);
+    }
+    100% {
+        transform: translate(50px, 50px);
+    }
+}
+
+.header {
+    text-align: center;
+    margin-bottom: 4rem;
+    z-index: 10;
+    position: relative;
+}
+
+.title {
+    font-size: clamp(2.5rem, 8vw, 5rem);
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 1rem;
+    position: relative;
+    display: inline-block;
+}
+
+.subtitle {
+    font-size: clamp(0.9rem, 2vw, 1.2rem);
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    font-weight: 600;
+}
+
+/* Control Pad Container */
+.controlPad {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 2rem;
+    max-width: 900px;
+    width: 100%;
+    z-index: 10;
+    position: relative;
+    padding: 2rem;
+}
+
+@media (max-width: 768px) {
+    .controlPad {
+        grid-template-columns: 1fr;
+        gap: 1.5rem;
+        padding: 1rem;
+    }
+}
+
+/* Pad Button Styles */
+.padButton {
+    position: relative;
+    background: #111;
+    border: 3px solid #333;
+    border-radius: 16px;
+    padding: 3rem 2rem;
+    text-decoration: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    cursor: pointer;
+    overflow: hidden;
+    min-height: 200px;
+}
+
+.padButton::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(135deg, transparent 0%, rgba(255, 255, 255, 0.05) 100%);
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+
+.padButton:hover::before {
+    opacity: 1;
+}
+
+.padButton::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255, 255, 255, 0.1) 0%, transparent 70%);
+    transform: translate(-50%, -50%);
+    transition: width 0.6s, height 0.6s;
+}
+
+.padButton:hover::after {
+    width: 300px;
+    height: 300px;
+}
+
+.padButton:hover {
+    transform: translateY(-8px) scale(1.02);
+    border-width: 4px;
+}
+
+.padButton:active {
+    transform: translateY(-4px) scale(0.98);
+}
+
+/* Individual Button Color Themes */
+.padButtonAdmin {
+    border-color: var(--color-lime);
+    box-shadow: 0 0 20px rgba(190, 250, 79, 0.2);
+}
+
+.padButtonAdmin:hover {
+    border-color: var(--color-lime);
+    box-shadow: 0 0 40px rgba(190, 250, 79, 0.5);
+    background: linear-gradient(135deg, #111 0%, rgba(190, 250, 79, 0.1) 100%);
+}
+
+.padButtonParticipant {
+    border-color: var(--color-teal);
+    box-shadow: 0 0 20px rgba(90, 167, 185, 0.2);
+}
+
+.padButtonParticipant:hover {
+    border-color: var(--color-teal);
+    box-shadow: 0 0 40px rgba(90, 167, 185, 0.5);
+    background: linear-gradient(135deg, #111 0%, rgba(90, 167, 185, 0.1) 100%);
+}
+
+.padButtonScreen {
+    border-color: #fff;
+    box-shadow: 0 0 20px rgba(255, 255, 255, 0.2);
+}
+
+.padButtonScreen:hover {
+    border-color: #fff;
+    box-shadow: 0 0 40px rgba(255, 255, 255, 0.5);
+    background: linear-gradient(135deg, #111 0%, rgba(255, 255, 255, 0.1) 100%);
+}
+
+.padButtonVote {
+    border-color: var(--color-cyan);
+    box-shadow: 0 0 20px rgba(77, 235, 255, 0.2);
+}
+
+.padButtonVote:hover {
+    border-color: var(--color-cyan);
+    box-shadow: 0 0 40px rgba(77, 235, 255, 0.5);
+    background: linear-gradient(135deg, #111 0%, rgba(77, 235, 255, 0.1) 100%);
+}
+
+/* Button Content */
+.buttonLabel {
+    font-size: clamp(0.7rem, 1.5vw, 0.9rem);
+    text-transform: uppercase;
+    letter-spacing: 0.3em;
+    font-weight: 600;
+    color: #666;
+    position: relative;
+    z-index: 2;
+}
+
+.buttonTitle {
+    font-size: clamp(1.5rem, 4vw, 2.5rem);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    position: relative;
+    z-index: 2;
+    transition: all 0.3s;
+}
+
+.padButtonAdmin .buttonTitle {
+    color: var(--color-lime);
+}
+
+.padButtonParticipant .buttonTitle {
+    color: var(--color-teal);
+}
+
+.padButtonScreen .buttonTitle {
+    color: #fff;
+}
+
+.padButtonVote .buttonTitle {
+    color: var(--color-cyan);
+}
+
+.padButton:hover .buttonTitle {
+    transform: scale(1.1);
+    text-shadow: 0 0 20px currentColor;
+}
+
+.buttonIcon {
+    font-size: clamp(2rem, 5vw, 3.5rem);
+    position: relative;
+    z-index: 2;
+    opacity: 0.6;
+    transition: all 0.3s;
+    filter: grayscale(0.3);
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.buttonIcon svg {
+    width: 100%;
+    height: 100%;
+    stroke: currentColor;
+}
+
+.padButton:hover .buttonIcon {
+    opacity: 1;
+    transform: scale(1.2) rotate(5deg);
+    filter: grayscale(0);
+}
+
+.padButton:focus-visible {
+    outline: 3px solid currentColor;
+    outline-offset: 4px;
+}
+
+/* Status indicator (small dot) */
+.statusIndicator {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #333;
+    transition: all 0.3s;
+    z-index: 3;
+}
+
+.padButton:hover .statusIndicator {
+    background: currentColor;
+    box-shadow: 0 0 10px currentColor;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.6;
+        transform: scale(1.2);
+    }
+}
+
+/* Full width buttons on mobile */
+@media (max-width: 768px) {
+    .controlPad {
+        padding: 1rem;
+    }
+    
+    .padButton {
+        min-height: 150px;
+        padding: 2rem 1.5rem;
+    }
+    
+    .header {
+        margin-bottom: 2rem;
+    }
+}
+
+/* Tablet adjustments */
+@media (min-width: 769px) and (max-width: 1024px) {
+    .controlPad {
+        max-width: 700px;
+        gap: 1.5rem;
+    }
+}
+
+/* Loading animation for page transitions */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.header,
+.controlPad {
+    animation: fadeIn 0.8s ease-out;
+}
+
+.controlPad {
+    animation-delay: 0.2s;
+    animation-fill-mode: both;
+}
+

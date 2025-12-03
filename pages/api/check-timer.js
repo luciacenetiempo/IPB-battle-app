@@ -15,16 +15,41 @@ function sendAdminLog(msg, type = 'info') {
 
 // Funzione per triggerare la generazione
 async function triggerGeneration(state) {
+    console.log('[CheckTimer] triggerGeneration called with state:', {
+        status: state.status,
+        participantsCount: Object.keys(state.participants || {}).length,
+        participants: Object.keys(state.participants || {})
+    });
+    
     const Replicate = require('replicate');
     const replicate = new Replicate({
         auth: process.env.REPLICATE_API_TOKEN,
     });
 
-    const participants = Object.values(state.participants);
-    const participantsWithPrompts = participants.filter(p => p.prompt && p.prompt.trim() !== '');
+    const participants = Object.values(state.participants || {});
+    console.log('[CheckTimer] All participants:', participants.map(p => ({
+        id: p.id,
+        token: p.token,
+        name: p.name,
+        promptType: typeof p.prompt,
+        promptLength: typeof p.prompt === 'string' ? p.prompt.length : 0,
+        hasPrompt: !!p.prompt
+    })));
+    
+    // Normalizza i prompt a stringhe prima di filtrare
+    const participantsWithPrompts = participants.filter(p => {
+        if (!p.prompt) return false;
+        const promptStr = String(p.prompt || '').trim();
+        const hasValidPrompt = promptStr !== '';
+        console.log(`[CheckTimer] Participant ${p.name} (${p.id}): prompt type=${typeof p.prompt}, length=${promptStr.length}, valid=${hasValidPrompt}`);
+        return hasValidPrompt;
+    });
+    
+    console.log(`[CheckTimer] Found ${participantsWithPrompts.length} participants with valid prompts`);
     
     if (participantsWithPrompts.length === 0) {
         sendAdminLog('⚠️ Nessun prompt disponibile per la generazione', 'warning');
+        console.log('[CheckTimer] No participants with prompts, aborting generation');
         return;
     }
 
@@ -32,13 +57,16 @@ async function triggerGeneration(state) {
     
     for (const p of participantsWithPrompts) {
         try {
-            sendAdminLog(`📝 Inizio generazione per ${p.name}: "${p.prompt.substring(0, 50)}${p.prompt.length > 50 ? '...' : ''}"`, 'info');
+            // Assicurati che il prompt sia sempre una stringa
+            const promptStr = String(p.prompt || '').trim();
+            console.log(`[CheckTimer] Generating for ${p.name} (${p.id}), prompt length: ${promptStr.length}`);
+            sendAdminLog(`📝 Inizio generazione per ${p.name}: "${promptStr.substring(0, 50)}${promptStr.length > 50 ? '...' : ''}"`, 'info');
             
             const startTime = Date.now();
             let prediction = await replicate.predictions.create({
                 model: "black-forest-labs/flux-2-dev",
                 input: {
-                    prompt: p.prompt.trim(),
+                    prompt: promptStr,
                     aspect_ratio: '1:1',
                     output_format: 'webp',
                     output_quality: 90
@@ -61,9 +89,15 @@ async function triggerGeneration(state) {
             const duration = ((Date.now() - startTime) / 1000).toFixed(1);
 
             if (prediction.status === 'succeeded') {
-                const { updateParticipant } = require('../../lib/game-state');
+                const { updateParticipant, getGameState } = require('../../lib/game-state');
+                const { broadcastEvent } = require('./game-stream');
                 const imageUrl = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output;
+                // p.id è ora il token
+                console.log(`[CheckTimer] Updating participant ${p.id} (${p.name}) with image URL:`, imageUrl);
                 updateParticipant(p.id, { image: imageUrl });
+                // Broadcast lo stato aggiornato dopo ogni immagine generata
+                const updatedState = getGameState();
+                broadcastEvent('state:update', updatedState);
                 sendAdminLog(`✅ Immagine generata con successo per ${p.name} (${duration}s)`, 'success');
             } else {
                 sendAdminLog(`❌ Generazione fallita per ${p.name}: ${prediction.status}`, 'error');
@@ -71,10 +105,19 @@ async function triggerGeneration(state) {
         } catch (error) {
             sendAdminLog(`❌ Errore durante la generazione per ${p.name}: ${error.message}`, 'error');
             console.error(`[CheckTimer] Error generating for ${p.name}:`, error);
+            if (error.stack) {
+                console.error(`[CheckTimer] Error stack:`, error.stack);
+            }
         }
     }
     
+    // Broadcast finale dello stato aggiornato
+    const { getGameState } = require('../../lib/game-state');
+    const { broadcastEvent } = require('./game-stream');
+    const finalState = getGameState();
+    broadcastEvent('state:update', finalState);
     sendAdminLog(`✨ Generazione completata per tutti i partecipanti`, 'success');
+    console.log('[CheckTimer] Generation completed, final state broadcasted');
 }
 
 export default async function handler(req, res) {

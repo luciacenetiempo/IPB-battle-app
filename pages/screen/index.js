@@ -1,196 +1,254 @@
-import { useEffect, useState } from 'react';
-import { getSocket } from '../../lib/socket';
+import { useEffect, useState, useRef } from 'react';
+import { db } from '../../lib/firebase';
+import { ref, onValue, update } from 'firebase/database';
 import styles from '../../styles/Screen.module.css';
-import Logo from '../../components/Logo';
 
 export default function Screen() {
     const [gameState, setGameState] = useState(null);
-    const [localPrompts, setLocalPrompts] = useState({});
-    const socket = getSocket();
+    const [participants, setParticipants] = useState({});
+    const promptRefs = useRef({});
 
     useEffect(() => {
-        socket.emit('join_room', 'screen');
-
-        socket.on('state:update', (state) => {
-            console.log('[Screen] State update received:', state.status, 'Participants:', Object.keys(state.participants || {}).length);
-            setGameState(state);
-            // Sync prompts from state on full update - questo assicura che i prompt siano sempre aggiornati
-            const prompts = {};
-            Object.values(state.participants || {}).forEach(p => {
-                // p.id è ora il token
-                const token = p.id || p.token;
-                // Includi anche prompt vuoti per mantenere la sincronizzazione
-                if (p.prompt !== undefined && p.prompt !== null) {
-                    // Gestisce stringhe, oggetti annidati, ecc.
-                    let promptValue = p.prompt;
-                    if (typeof promptValue === 'object') {
-                        if (typeof promptValue.prompt === 'string') {
-                            promptValue = promptValue.prompt;
-                        } else if (promptValue.prompt && typeof promptValue.prompt === 'object' && typeof promptValue.prompt.prompt === 'string') {
-                            promptValue = promptValue.prompt.prompt;
-                        } else {
-                            promptValue = '';
-                        }
-                    }
-                    // Assicurati che il prompt sia sempre una stringa
-                    const promptStr = String(promptValue || '');
-                    prompts[token] = promptStr;
-                    if (promptStr && promptStr.length > 0) {
-                        console.log('[Screen] Found prompt for token', token, 'length:', promptStr.length, 'preview:', promptStr.substring(0, 30));
-                    } else {
-                        console.log('[Screen] Prompt for token', token, 'is empty or invalid, type:', typeof p.prompt, 'value:', p.prompt);
-                    }
-                }
-            });
-            setLocalPrompts(prev => {
-                // Merge con i prompt esistenti per non perdere aggiornamenti
-                // Usa sempre i prompt dallo stato se disponibili
-                const merged = { ...prev, ...prompts };
-                console.log('[Screen] Updated prompts:', Object.keys(merged), 'prompts:', Object.keys(merged).map(id => ({ id, length: typeof merged[id] === 'string' ? merged[id].length : 0, type: typeof merged[id] })));
-                return merged;
-            });
+        // Listen to GameState
+        const stateRef = ref(db, 'gameState');
+        const unsubscribe = onValue(stateRef, (snapshot) => {
+            const data = snapshot.val();
+            if (data) {
+                setGameState(data);
+            }
         });
 
-        socket.on('timer:update', (data) => {
-            setGameState(prev => prev ? ({ ...prev, ...data }) : null);
+        // Listen to Participants (real-time typing)
+        const participantsRef = ref(db, 'participants');
+        const unsubParticipants = onValue(participantsRef, (snapshot) => {
+            const data = snapshot.val() || {};
+            console.log('[SCREEN] Participants update received:', data);
+            console.log('[SCREEN] Participant IDs:', Object.keys(data));
+            Object.entries(data).forEach(([id, p]) => {
+                console.log(`[SCREEN] Participant ${id}:`, {
+                    name: p.name,
+                    prompt: p.prompt?.substring(0, 20) + '...',
+                    hasImage: !!p.image,
+                    imageUrl: p.image
+                });
+            });
+            setParticipants(data);
         });
 
-        socket.on('prompt:update', (data) => {
-            console.log('[Screen] Prompt update received:', data, 'Full data:', JSON.stringify(data), 'has prompt:', 'prompt' in data, 'prompt value:', data?.prompt);
-            if (data && data.id !== undefined) {
-                // data.id è ora un token, non un socketId
-                const token = data.token || data.id;
+        return () => {
+            unsubscribe();
+            unsubParticipants();
+        };
+    }, []);
+
+    // Timer Logic
+    const [displayTimer, setDisplayTimer] = useState(0);
+    useEffect(() => {
+        if (!gameState) return;
+        const interval = setInterval(() => {
+            if (gameState.status === 'WRITING' && gameState.startTime) {
+                const elapsed = Math.floor((Date.now() - gameState.startTime) / 1000);
+                const remaining = Math.max(0, gameState.duration - elapsed);
+                setDisplayTimer(remaining);
+            } else if (gameState.status === 'VOTING' && gameState.votingTimerStartTime) {
+                // Calculate voting timer based on start time
+                const elapsed = Math.floor((Date.now() - gameState.votingTimerStartTime) / 1000);
+                const remaining = Math.max(0, 120 - elapsed);
+                setDisplayTimer(remaining);
                 
-                // Prendi il prompt dall'evento - potrebbe essere una stringa o un oggetto con {prompt: "..."}
-                let prompt = data.prompt;
-                
-                // Se il prompt è un oggetto, estrai la stringa
-                if (prompt && typeof prompt === 'object' && prompt.prompt !== undefined) {
-                    prompt = prompt.prompt;
+                // Auto-end voting when timer reaches 0
+                if (remaining === 0 && gameState.status === 'VOTING') {
+                    // Update status to ENDED in Firebase
+                    update(ref(db, 'gameState'), { status: 'ENDED' });
                 }
-                
-                // Aggiorna sempre, anche se il prompt è una stringa vuota
-                if (prompt !== undefined) {
-                    // Assicurati che il prompt sia sempre una stringa
-                    const promptStr = String(prompt || '');
-                    setLocalPrompts(prev => {
-                        const updated = {
-                            ...prev,
-                            [token]: promptStr
-                        };
-                        console.log('[Screen] Updated localPrompts for token', token, 'prompt length:', promptStr.length, 'preview:', promptStr.substring(0, 50));
-                        return updated;
+            } else if (gameState.status === 'VOTING') {
+                // Fallback: use votingTimer if votingTimerStartTime is not set
+                setDisplayTimer(gameState.votingTimer || 0);
+            } else {
+                setDisplayTimer(gameState.timer || 0);
+            }
+        }, 1000);
+        return () => clearInterval(interval);
+    }, [gameState]);
+
+    // Auto-scroll logic: scroll to bottom when prompt changes
+    useEffect(() => {
+        if (!gameState || (gameState.status !== 'WRITING' && gameState.status !== 'GENERATING')) return;
+
+        const scrollTimeouts = [];
+        const participantsList = Object.entries(participants);
+
+        participantsList.forEach(([id, p]) => {
+            const contentRef = promptRefs.current[id];
+
+            if (contentRef) {
+                // Scroll to bottom with smooth animation
+                const scrollToBottom = () => {
+                    requestAnimationFrame(() => {
+                        contentRef.scrollTo({
+                            top: contentRef.scrollHeight,
+                            behavior: 'smooth'
+                        });
                     });
-                } else {
-                    // Se il prompt non è nell'evento, aggiorna dallo stato corrente usando setState callback
-                    setGameState(currentState => {
-                        if (currentState?.participants?.[token]?.prompt !== undefined) {
-                            const prompt = currentState.participants[token].prompt;
-                            // Assicurati che il prompt sia sempre una stringa
-                            const promptStr = String(prompt || '');
-                            setLocalPrompts(prev => {
-                                const updated = { ...prev, [token]: promptStr };
-                                console.log('[Screen] Updated localPrompts from state for token', token, 'prompt length:', promptStr.length);
-                                return updated;
-                            });
-                        } else {
-                            console.warn('[Screen] Prompt update received but no prompt found for token', token, 'in event or state');
-                        }
-                        return currentState;
-                    });
-                }
+                };
+
+                // Small delay to ensure DOM is updated with new prompt text
+                const timeoutId = setTimeout(scrollToBottom, 100);
+                scrollTimeouts.push(timeoutId);
             }
         });
 
         return () => {
-            socket.off('state:update');
-            socket.off('timer:update');
-            socket.off('prompt:update');
+            scrollTimeouts.forEach(timeoutId => clearTimeout(timeoutId));
         };
-    }, [socket]);
+    }, [participants, gameState?.status]);
 
     if (!gameState) return <div className={styles.loading}>INITIALIZING...</div>;
 
-    const participants = Object.values(gameState.participants);
+    const participantsList = Object.entries(participants);
     const isVoting = gameState.status === 'VOTING' || gameState.status === 'ENDED';
+
+    const participantCount = participantsList.length;
+    const isTwoParticipants = participantCount === 2;
+
+    const isFourParticipants = participantCount === 4;
 
     return (
         <div className={styles.container}>
-            <Logo size="medium" />
-            <div className={styles.header}>
-                <div className={styles.roundInfo}>
+            {!isFourParticipants && (
+                <div className={styles.themeHeader}>
                     <span className={styles.roundLabel}>ROUND {gameState.round}</span>
-                    <h1 className="glitch" data-text={gameState.theme}>{gameState.theme}</h1>
-                </div>
-                <div className={styles.timer}>
-                    {isVoting ? gameState.votingTimer : gameState.timer}
-                </div>
-            </div>
-
-            <div className={styles.grid}>
-                {participants.map((p) => (
-                    <div key={p.id} className={styles.card} style={{ backgroundColor: p.color || '#B6FF6C' }}>
-                        <div className={styles.cardHeader}>
-                            <span className={styles.playerName}>{p.name}</span>
-                            {isVoting && <span className={styles.votes}>{p.votes} VOTES</span>}
-                        </div>
-
-                        <div className={styles.cardContent}>
-                            {/* SHOW PROMPT IF WRITING OR GENERATING */}
-                            {!isVoting && (
-                                <div className={styles.promptDisplay}>
-                                    {/* Mostra sempre il prompt più aggiornato da localPrompts o dallo stato */}
-                                    {(() => {
-                                        // p.id è ora il token
-                                        const token = p.id || p.token;
-                                        let displayPrompt = '';
-                                        if (localPrompts[token] !== undefined) {
-                                            displayPrompt = typeof localPrompts[token] === 'string' ? localPrompts[token] : String(localPrompts[token] || '');
-                                        } else if (p.prompt) {
-                                            if (typeof p.prompt === 'string') {
-                                                displayPrompt = p.prompt;
-                                            } else if (typeof p.prompt === 'object' && p.prompt.prompt) {
-                                                displayPrompt = String(p.prompt.prompt || '');
-                                            } else {
-                                                displayPrompt = String(p.prompt || '');
-                                            }
-                                        }
-                                        return displayPrompt;
-                                    })()}<span className={styles.cursor}></span>
-                                </div>
-                            )}
-
-                            {/* SHOW IMAGE IF GENERATING (Placeholder) OR VOTING */}
-                            {(gameState.status === 'GENERATING' || isVoting) && (
-                                <div className={styles.imageContainer}>
-                                    {p.image ? (
-                                        <img src={p.image} alt={`Generated image for ${p.name}`} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-                                    ) : (
-                                        <div className={styles.placeholder}>
-                                            {gameState.status === 'GENERATING' ? 'GENERATING...' : 'IMAGE_READY'}
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-
-                        {isVoting && (
-                            <div
-                                className={styles.voteOverlay}
-                                style={{ height: `${(p.votes / (Object.values(gameState.participants).reduce((a, b) => a + b.votes, 0) || 1)) * 100}%` }}
-                            />
-                        )}
-                    </div>
-                ))}
-            </div>
-
-            {gameState.status === 'ENDED' && (
-                <div className={styles.winnerOverlay}>
-                    <h1 className="glitch" data-text="WINNER">WINNER</h1>
-                    {/* Logic to calculate winner */}
-                    <h2>{participants.sort((a, b) => b.votes - a.votes)[0]?.name}</h2>
+                    {gameState.theme && (
+                        <h1 className={`${styles.theme} glitch`} data-text={gameState.theme}>
+                            {gameState.theme}
+                        </h1>
+                    )}
                 </div>
             )}
+
+            <div className={`${styles.grid} ${isTwoParticipants ? styles.gridTwo : styles.gridFour}`}>
+                {participantsList.map(([id, p]) => {
+                    const totalVotes = Object.values(participants).reduce((a, b) => a + (b.votes || 0), 0) || 1;
+                    const votePercentage = isVoting ? ((p.votes || 0) / totalVotes) * 100 : 0;
+
+                    return (
+                        <div
+                            key={id}
+                            className={styles.card}
+                            style={{ backgroundColor: p.color || '#B6FF6C' }}
+                        >
+
+                            <div
+                                className={styles.cardContent}
+                                ref={(el) => {
+                                    if (el) {
+                                        promptRefs.current[id] = el;
+                                    }
+                                }}
+                            >
+                                {/* WRITING MODE: Show prompt only */}
+                                {gameState.status === 'WRITING' && (
+                                    <div className={styles.promptDisplay}>
+                                        {p.prompt || ''}<span className={styles.cursor}></span>
+                                    </div>
+                                )}
+
+                                {/* GENERATING MODE: Show image large in center, no prompt */}
+                                {gameState.status === 'GENERATING' && (
+                                    <div className={styles.generatingWrapper}>
+                                        {!p.image && (
+                                            <div className={styles.generatingBadge}>
+                                                <div className={styles.generatingSpinner}></div>
+                                                <span>GENERATING...</span>
+                                            </div>
+                                        )}
+                                        {p.image ? (
+                                            <div className={styles.imageContainer}>
+                                                <img
+                                                    src={p.image}
+                                                    alt={`Generated image for ${p.name}`}
+                                                    className={styles.image}
+                                                />
+                                            </div>
+                                        ) : (
+                                            <div className={styles.imageContainer}>
+                                                <div className={styles.placeholder}>
+                                                    GENERATING...
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* VOTING MODE: Show image only */}
+                                {isVoting && (
+                                    <div className={styles.imageContainer}>
+                                        {p.image ? (
+                                            <img
+                                                src={p.image}
+                                                alt={`Generated image for ${p.name}`}
+                                                className={styles.image}
+                                            />
+                                        ) : (
+                                            <div className={styles.placeholder}>
+                                                IMAGE_READY
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className={styles.cardFooter}>
+                                {p.name}
+                            </div>
+
+                            {isVoting && (
+                                <>
+                                    <div
+                                        className={styles.voteOverlay}
+                                        style={{ height: `${votePercentage}%` }}
+                                    />
+                                    {votePercentage > 0 && (
+                                        <div className={styles.votePercentage}>
+                                            {Math.round(votePercentage)}%
+                                        </div>
+                                    )}
+                                </>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+
+            {!isFourParticipants && (
+                <div className={styles.timerFooter}>
+                    <div className={styles.timer}>
+                        {displayTimer}<span className={styles.timerUnit}>s</span>
+                    </div>
+                </div>
+            )}
+
+            {gameState.status === 'ENDED' && (() => {
+                const winner = participantsList.sort((a, b) => ((b[1]?.votes || 0) - (a[1]?.votes || 0)))[0]?.[1];
+                return (
+                    <div className={styles.winnerOverlay}>
+                        {winner?.image && (
+                            <div 
+                                className={styles.winnerImageBackground}
+                                style={{ backgroundImage: `url(${winner.image})` }}
+                            />
+                        )}
+                        <div className={styles.winnerOverlayDark}>
+                            <h1 className={`${styles.winnerTitle} glitch`} data-text="WINNER">
+                                WINNER
+                            </h1>
+                            <h2 className={styles.winnerName}>
+                                {winner?.name || 'No Winner'}
+                            </h2>
+                        </div>
+                    </div>
+                );
+            })()}
         </div>
     );
 }

@@ -1,0 +1,19 @@
+{
+  "/_app": "pages/_app.js",
+  "/_error": "pages/_error.js",
+  "/admin": "pages/admin.html",
+  "/api/check-timer": "pages/api/check-timer.js",
+  "/api/game-events": "pages/api/game-events.js",
+  "/api/test-generation": "pages/api/test-generation.js",
+  "/api/game-stream": "pages/api/game-stream.js",
+  "/participant": "pages/participant.html",
+  "/api/test": "pages/api/test.js",
+  "/": "pages/index.html",
+  "/api/close-session": "pages/api/close-session.js",
+  "/api/generate": "pages/api/generate.js",
+  "/_document": "pages/_document.js",
+  "/testapi": "pages/testapi.html",
+  "/screen": "pages/screen.html",
+  "/vote": "pages/vote.html",
+  "/404": "pages/404.html"
+}
