@@ -1,4 +1,4 @@
-import { admin } from '../../lib/firebaseAdmin';
+import { admin, initFirebase } from '../../lib/firebaseAdmin';
 
 export const config = {
     runtime: 'nodejs',
@@ -10,6 +10,9 @@ export default async function handler(req, res) {
     }
 
     try {
+        // Ensure Firebase is initialized
+        initFirebase();
+
         // Get database instance
         const db = admin.database();
         console.log('[Session Closure] Database initialized successfully');
@@ -82,7 +85,8 @@ export default async function handler(req, res) {
         console.error('[Session Closure] Error:', error);
         return res.status(500).json({
             success: false,
-            error: error.message
+            error: error.message,
+            details: error instanceof Error ? error.message : String(error)
         });
     }
 }

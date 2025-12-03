@@ -1,4 +1,4 @@
-import { admin } from '../../lib/firebaseAdmin';
+import { admin, initFirebase } from '../../lib/firebaseAdmin';
 import Replicate from 'replicate';
 
 export const config = {
@@ -15,6 +15,9 @@ export default async function handler(req, res) {
         if (!process.env.REPLICATE_API_TOKEN) {
             throw new Error('REPLICATE_API_TOKEN is not set');
         }
+
+        // Ensure Firebase is initialized
+        initFirebase();
 
         const db = admin.database();
         console.log('[API] Database initialized successfully'); // Debug URL
